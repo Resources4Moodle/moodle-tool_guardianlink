@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">GuardianLink</title>
+  <desc id="desc">A protective shield linking a learner to supporting adults.</desc>
+  <defs>
+    <linearGradient id="glshield" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f7dd1"/>
+      <stop offset="1" stop-color="#35a853"/>
+    </linearGradient>
+  </defs>
+  <!-- Shield -->
+  <path d="M32 3.5 55 12.5v15.7c0 14.9-9.6 26.4-23 32.3C18.6 54.6 9 43.1 9 28.2V12.5z"
+        fill="url(#glshield)"/>
+  <path d="M32 3.5 55 12.5v15.7c0 14.9-9.6 26.4-23 32.3C18.6 54.6 9 43.1 9 28.2V12.5z"
+        fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="1.5"/>
+  <!-- Connecting links (learner -> two adults) -->
+  <path d="M32 26 22 40M32 26 42 40" stroke="#ffffff" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.85"/>
+  <!-- Learner node (top, larger) -->
+  <circle cx="32" cy="23" r="7.5" fill="#ffffff"/>
+  <!-- Supporting adult nodes -->
+  <circle cx="22" cy="42" r="5.5" fill="#ffffff" opacity="0.95"/>
+  <circle cx="42" cy="42" r="5.5" fill="#ffffff" opacity="0.95"/>
+</svg>

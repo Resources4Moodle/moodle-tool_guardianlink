@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">GuardianLink</title>
+  <!-- Single-colour mark; inherits the surrounding text colour for theme adaptability. -->
+  <path d="M32 3.5 55 12.5v15.7c0 14.9-9.6 26.4-23 32.3C18.6 54.6 9 43.1 9 28.2V12.5z"
+        fill="none" stroke="currentColor" stroke-width="3.2" stroke-linejoin="round"/>
+  <path d="M32 26 22 41M32 26 42 41" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+  <circle cx="32" cy="23" r="6.5" fill="currentColor"/>
+  <circle cx="22" cy="43" r="4.5" fill="currentColor"/>
+  <circle cx="42" cy="43" r="4.5" fill="currentColor"/>
+</svg>
