@@ -70,8 +70,16 @@ function xmldb_tool_guardianlink_upgrade(int $oldversion): bool {
     // (so core's login-as course check passes) + course-context assignability.
     if ($oldversion < 2026062900) {
         $table = new xmldb_table('tool_guardianlink_courseconfig');
-        $field = new xmldb_field('allowassistedaccess', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL,
-            null, '0', 'allowteacherproxy');
+        $field = new xmldb_field(
+            'allowassistedaccess',
+            XMLDB_TYPE_INTEGER,
+            '1',
+            null,
+            XMLDB_NOTNULL,
+            null,
+            '0',
+            'allowteacherproxy'
+        );
         if (!$dbman->field_exists($table, $field)) {
             $dbman->add_field($table, $field);
         }
