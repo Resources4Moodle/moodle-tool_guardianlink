@@ -937,6 +937,22 @@ class relationship_service {
     }
 
     /**
+     * Whether governed assisted access (Moodle "log in as") is available on this site.
+     *
+     * Assisted access is an EXPERIMENTAL, high-risk capability and is out of scope for the
+     * MVP. It stays completely inert unless BOTH the organisation master switch
+     * (enableassistedmode) AND the separate experimental-risk acknowledgement
+     * (assistedexperimentalack) are set, so it can never be activated by a single accidental
+     * toggle. Until a full security/safeguarding review is completed it must remain off.
+     *
+     * @return bool
+     */
+    public static function assisted_feature_enabled(): bool {
+        return (bool)get_config('tool_guardianlink', 'enableassistedmode')
+            && (bool)get_config('tool_guardianlink', 'assistedexperimentalack');
+    }
+
+    /**
      * Check whether an authorised adult can access learner/course data.
      *
      * @param int $adultid
@@ -963,7 +979,7 @@ class relationship_service {
         if (in_array($relationship->authoritystatus, ['revoked', 'disputed', 'restricted'], true)) {
             return false;
         }
-        if ($permission === 'assisted' && !get_config('tool_guardianlink', 'enableassistedmode')) {
+        if ($permission === 'assisted' && !self::assisted_feature_enabled()) {
             return false;
         }
         if ($permission === 'healthsummary' && !get_config('tool_guardianlink', 'enablehealthrecords')) {
@@ -2009,7 +2025,7 @@ class relationship_service {
      * @return array ['allowed' => bool, 'reason' => string]
      */
     public static function assisted_access_status(int $adultid, int $childid, int $courseid): array {
-        if (!get_config('tool_guardianlink', 'enableassistedmode')) {
+        if (!self::assisted_feature_enabled()) {
             return ['allowed' => false, 'reason' => get_string('assistedreason_orgoff', 'tool_guardianlink')];
         }
         $cfg = self::get_course_config($courseid);

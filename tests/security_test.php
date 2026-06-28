@@ -236,4 +236,35 @@ final class security_test extends \advanced_testcase {
         $due = rs::get_due_digest_preferences();
         $this->assertNotContains((int)$adult->id, array_map(fn($d) => (int)$d->guardianid, $due));
     }
+
+    /**
+     * Assisted access (experimental) stays inert unless BOTH the master switch and the
+     * experimental-risk acknowledgement are set — a single toggle must never enable it.
+     */
+    public function test_assisted_access_requires_double_optin(): void {
+        $this->resetAfterTest();
+        [$course, $adult, $learner, $relid] = $this->base();
+        // Grant an explicit assisted scope so only the org-level gating is under test.
+        rs::set_scopes($relid, [['scopekind' => 'course', 'courseid' => $course->id, 'allowassisted' => 1]], 2, 'family_full');
+
+        // Neither switch set: off.
+        $this->assertFalse(rs::assisted_feature_enabled());
+        $this->assertFalse(rs::can_access_child($adult->id, $learner->id, $course->id, 'assisted'));
+
+        // Master switch alone: still off (the accidental-single-toggle case).
+        set_config('enableassistedmode', 1, 'tool_guardianlink');
+        $this->assertFalse(rs::assisted_feature_enabled());
+        $this->assertFalse(rs::can_access_child($adult->id, $learner->id, $course->id, 'assisted'));
+
+        // Acknowledgement alone: still off.
+        set_config('enableassistedmode', 0, 'tool_guardianlink');
+        set_config('assistedexperimentalack', 1, 'tool_guardianlink');
+        $this->assertFalse(rs::assisted_feature_enabled());
+        $this->assertFalse(rs::can_access_child($adult->id, $learner->id, $course->id, 'assisted'));
+
+        // Both set: feature becomes available.
+        set_config('enableassistedmode', 1, 'tool_guardianlink');
+        $this->assertTrue(rs::assisted_feature_enabled());
+        $this->assertTrue(rs::can_access_child($adult->id, $learner->id, $course->id, 'assisted'));
+    }
 }

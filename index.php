@@ -50,7 +50,7 @@ $links[] = html_writer::link(
     new moodle_url('/admin/tool/guardianlink/my/admin.php'),
     get_string('childrenadmin', 'tool_guardianlink')
 );
-if (get_config('tool_guardianlink', 'enableassistedmode')) {
+if (\tool_guardianlink\local\relationship_service::assisted_feature_enabled()) {
     $links[] = html_writer::link(
         new moodle_url('/admin/tool/guardianlink/my/assist.php'),
         get_string('assistedhub', 'tool_guardianlink')

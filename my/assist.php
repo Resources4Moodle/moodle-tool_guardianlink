@@ -29,6 +29,18 @@ use tool_guardianlink\local\relationship_service;
 
 require_login();
 $context = context_system::instance();
+
+// Assisted access is an experimental, out-of-MVP capability that drives Moodle "log in as".
+// Refuse outright unless the organisation has enabled it AND acknowledged the experimental risk.
+if (!relationship_service::assisted_feature_enabled()) {
+    redirect(
+        new moodle_url('/admin/tool/guardianlink/index.php'),
+        get_string('assistedreason_orgoff', 'tool_guardianlink'),
+        null,
+        \core\output\notification::NOTIFY_WARNING
+    );
+}
+
 $PAGE->set_context($context);
 $PAGE->set_url(new moodle_url('/admin/tool/guardianlink/my/assist.php'));
 $PAGE->set_pagelayout('standard');

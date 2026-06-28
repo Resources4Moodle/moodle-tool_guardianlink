@@ -144,6 +144,12 @@ if ($hassiteconfig) {
         0
     ));
     $settings->add(new admin_setting_configcheckbox(
+        'tool_guardianlink/assistedexperimentalack',
+        get_string('assistedexperimentalack', 'tool_guardianlink'),
+        get_string('assistedexperimentalack_desc', 'tool_guardianlink'),
+        0
+    ));
+    $settings->add(new admin_setting_configcheckbox(
         'tool_guardianlink/allowguardianproposetutor',
         get_string('allowguardianproposetutor', 'tool_guardianlink'),
         get_string('allowguardianproposetutor_desc', 'tool_guardianlink'),
