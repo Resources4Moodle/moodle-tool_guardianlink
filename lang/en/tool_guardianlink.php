@@ -559,6 +559,8 @@ $string['templateshortname'] = 'Short name (key)';
 $string['templatesintro'] = 'Create reusable email/message templates with {placeholders}. Templates can be sent manually (e.g. results to parents) or bound to a trigger.';
 $string['templatesnone'] = 'No templates yet.';
 $string['templatetrigger'] = 'When to use';
+$string['threadinactive'] = 'This conversation is closed because the authorised-adult relationship is no '
+    . 'longer active or in scope for this course.';
 $string['threadprivacynote'] = 'This conversation is routed through GuardianLink. Contact details are not exposed to either party.';
 $string['timecreated'] = 'Created';
 $string['trigger_manual'] = 'Manual (sent on demand)';

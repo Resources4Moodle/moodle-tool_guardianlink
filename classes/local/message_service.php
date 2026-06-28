@@ -175,6 +175,24 @@ class message_service {
     }
 
     /**
+     * Whether the thread's authorised adult is still an eligible proxy recipient, so the conversation
+     * may continue. Returns false once the relationship is revoked, restricted, disputed, expired or
+     * the teacher-contact/messaging scope on the course has been removed.
+     *
+     * @param \stdClass $thread
+     * @return bool
+     */
+    public static function thread_relationship_live(\stdClass $thread): bool {
+        $recipients = relationship_service::get_proxy_recipients((int)$thread->childid, (int)$thread->courseid);
+        foreach ($recipients as $recipient) {
+            if ((int)$recipient->guardianid === (int)$thread->guardianid) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Reply within an existing proxy thread (teacher <-> authorised adult), keeping the conversation
      * inside GuardianLink and preserving the no-contact-detail-exposure guarantee both ways.
      *
@@ -189,6 +207,13 @@ class message_service {
         // Only the two participants of the thread may reply.
         if (!in_array($senderid, [(int)$thread->teacherid, (int)$thread->guardianid], true)) {
             throw new \moodle_exception('accessdenied', 'tool_guardianlink');
+        }
+        // The channel stays open only while the authorised adult is STILL an eligible proxy recipient
+        // (verified, active, in time, with teacher-contact + messaging scope on the course). A revoked,
+        // restricted, disputed or out-of-scope adult cannot keep using an old thread, and a teacher
+        // cannot keep replying into a dead channel either.
+        if (!self::thread_relationship_live($thread)) {
+            throw new \moodle_exception('threadinactive', 'tool_guardianlink');
         }
         $toid = ($senderid === (int)$thread->teacherid) ? (int)$thread->guardianid : (int)$thread->teacherid;
         $sender = \core_user::get_user($senderid, '*', MUST_EXIST);

@@ -59,19 +59,24 @@ echo $OUTPUT->notification(get_string('threadprivacynote', 'tool_guardianlink'),
 echo html_writer::tag('p', html_writer::tag('strong', get_string('lastmessage', 'tool_guardianlink') . ': ')
     . format_text((string)$thread->lastmessage, FORMAT_PLAIN));
 
-echo html_writer::start_tag('form', ['method' => 'post', 'action' => $PAGE->url->out(false)]);
-echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'sesskey', 'value' => sesskey()]);
-echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'id', 'value' => $id]);
-echo html_writer::tag('label', get_string('replylabel', 'tool_guardianlink'), ['for' => 'gl_reply']);
-echo html_writer::tag(
-    'textarea',
-    '',
-    ['name' => 'reply', 'id' => 'gl_reply', 'rows' => 5, 'cols' => 80, 'class' => 'form-control mb-2']
-);
-echo html_writer::empty_tag(
-    'input',
-    ['type' => 'submit', 'class' => 'btn btn-primary', 'value' => get_string('send', 'tool_guardianlink')]
-);
-echo html_writer::end_tag('form');
+// The reply form only appears while the authorised-adult relationship is still live and in scope.
+if (message_service::thread_relationship_live($thread)) {
+    echo html_writer::start_tag('form', ['method' => 'post', 'action' => $PAGE->url->out(false)]);
+    echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'sesskey', 'value' => sesskey()]);
+    echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'id', 'value' => $id]);
+    echo html_writer::tag('label', get_string('replylabel', 'tool_guardianlink'), ['for' => 'gl_reply']);
+    echo html_writer::tag(
+        'textarea',
+        '',
+        ['name' => 'reply', 'id' => 'gl_reply', 'rows' => 5, 'cols' => 80, 'class' => 'form-control mb-2']
+    );
+    echo html_writer::empty_tag(
+        'input',
+        ['type' => 'submit', 'class' => 'btn btn-primary', 'value' => get_string('send', 'tool_guardianlink')]
+    );
+    echo html_writer::end_tag('form');
+} else {
+    echo $OUTPUT->notification(get_string('threadinactive', 'tool_guardianlink'), 'warning');
+}
 
 echo $OUTPUT->footer();

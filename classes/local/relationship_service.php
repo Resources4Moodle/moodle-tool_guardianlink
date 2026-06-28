@@ -642,10 +642,22 @@ class relationship_service {
             'accessprofile',
             $typedata ? $typedata->defaultprofile : 'family_basic'
         ), PARAM_ALPHANUMEXT);
+        // Replace mode (the incoming scope set replaces previous active scopes) defaults ON for
+        // authoritative syncs (ERP/SIS/web services pass $fromapi), and OFF for manual edits unless
+        // the caller explicitly opts in with 'replacescopes'. This keeps additive behaviour for the
+        // course-scoped registry, which must not touch other courses' scopes.
+        $replacescopes = (bool)self::value($data, 'replacescopes', $fromapi);
         if (self::value($data, 'scopes', null) !== null) {
-            self::set_scopes($relationshipid, (array)self::value($data, 'scopes', []), $createdby, $profile, $sourcecode);
+            self::set_scopes(
+                $relationshipid,
+                (array)self::value($data, 'scopes', []),
+                $createdby,
+                $profile,
+                $sourcecode,
+                $replacescopes
+            );
         } else {
-            self::set_scopes_from_csv($relationshipid, $data, $createdby, $profile, $sourcecode);
+            self::set_scopes_from_csv($relationshipid, $data, $createdby, $profile, $sourcecode, $replacescopes);
         }
 
         if ($sourcecode !== '' && $externalid !== '') {
@@ -703,13 +715,15 @@ class relationship_service {
      * @param int $createdby
      * @param string $profile
      * @param string $sourcecode
+     * @param bool $replace Replace mode: revoke previously-active scopes missing from this set.
      */
     public static function set_scopes_from_csv(
         int $relationshipid,
         object|array $data,
         int $createdby = 0,
         string $profile = 'family_basic',
-        string $sourcecode = ''
+        string $sourcecode = '',
+        bool $replace = false
     ): void {
         $scopes = [];
         foreach (explode(',', (string)self::value($data, 'courseids', '')) as $rawid) {
@@ -735,7 +749,7 @@ class relationship_service {
             }
             $scopes[$key] = $scope;
         }
-        self::set_scopes($relationshipid, $scopes, $createdby, $profile, $sourcecode);
+        self::set_scopes($relationshipid, $scopes, $createdby, $profile, $sourcecode, $replace);
     }
 
     /**
@@ -746,17 +760,23 @@ class relationship_service {
      * @param int $createdby
      * @param string $profile
      * @param string $sourcecode
+     * @param bool $replace Replace mode: revoke previously-active scopes missing from this set.
      */
     public static function set_scopes(
         int $relationshipid,
         array $scopes,
         int $createdby = 0,
         string $profile = 'family_basic',
-        string $sourcecode = ''
+        string $sourcecode = '',
+        bool $replace = false
     ): void {
         global $DB;
         $profiledefaults = self::access_profiles()[$profile] ?? self::access_profiles()['family_basic'];
         $now = time();
+        // In replace mode we record which scope identities the incoming set covers, then revoke any
+        // previously-active scope that is missing — so narrowing a parent from five courses to one
+        // (e.g. from an ERP/SIS sync) actually removes the other four.
+        $seenkeys = [];
         foreach ($scopes as $scope) {
             if (!is_array($scope)) {
                 $scope = (array)$scope;
@@ -764,6 +784,7 @@ class relationship_service {
             $courseid = (int)($scope['courseid'] ?? 0);
             $categoryid = (int)($scope['categoryid'] ?? 0);
             $scopekind = clean_param((string)($scope['scopekind'] ?? ($categoryid > 0 ? 'category' : 'course')), PARAM_ALPHANUMEXT);
+            $seenkeys[$scopekind . ':' . $courseid . ':' . $categoryid] = true;
             if ($scopekind === 'course' && $courseid > 0 && !$DB->record_exists('course', ['id' => $courseid])) {
                 continue;
             }
@@ -804,6 +825,21 @@ class relationship_service {
                 $DB->insert_record('tool_guardianlink_scope', $record);
             }
         }
+        if ($replace) {
+            // Revoke any still-active scope of this relationship that the incoming set did not include.
+            $existing = $DB->get_records(
+                'tool_guardianlink_scope',
+                ['relationshipid' => $relationshipid, 'status' => self::STATUS_ACTIVE]
+            );
+            foreach ($existing as $scope) {
+                $key = $scope->scopekind . ':' . (int)$scope->courseid . ':' . (int)$scope->categoryid;
+                if (!isset($seenkeys[$key])) {
+                    $scope->status = self::STATUS_REVOKED;
+                    $scope->timemodified = $now;
+                    $DB->update_record('tool_guardianlink_scope', $scope);
+                }
+            }
+        }
     }
 
     /**
@@ -823,7 +859,7 @@ class relationship_service {
                   JOIN {user} u ON u.id = r.childid
                  WHERE r.guardianid = :adultid
                    AND r.status = :status
-                   AND r.authoritystatus <> :revoked
+                   AND r.authoritystatus NOT IN (:revoked, :restricted, :disputed)
                    AND (r.starttime = 0 OR r.starttime <= :now1)
                    AND (r.endtime = 0 OR r.endtime >= :now2)
                    AND u.deleted = 0
@@ -832,6 +868,8 @@ class relationship_service {
             'adultid' => $adultid,
             'status' => self::STATUS_ACTIVE,
             'revoked' => self::STATUS_REVOKED,
+            'restricted' => 'restricted',
+            'disputed' => 'disputed',
             'now1' => $now,
             'now2' => $now,
         ]);
@@ -857,12 +895,14 @@ class relationship_service {
     public static function get_active_relationship(int $adultid, int $learnerid): ?object {
         global $DB;
         $now = time();
+        // Revoked, restricted-contact and disputed relationships convey no access and must not even
+        // surface in adult-facing lookups (they must not leak that a learner is linked).
         $sql = "SELECT *
                   FROM {tool_guardianlink_rel}
                  WHERE guardianid = :adultid
                    AND childid = :learnerid
                    AND status = :status
-                   AND authoritystatus <> :revoked
+                   AND authoritystatus NOT IN (:revoked, :restricted, :disputed)
                    AND (starttime = 0 OR starttime <= :now1)
                    AND (endtime = 0 OR endtime >= :now2)
               ORDER BY legal DESC, endtime ASC, id DESC";
@@ -871,6 +911,8 @@ class relationship_service {
             'learnerid' => $learnerid,
             'status' => self::STATUS_ACTIVE,
             'revoked' => self::STATUS_REVOKED,
+            'restricted' => 'restricted',
+            'disputed' => 'disputed',
             'now1' => $now,
             'now2' => $now,
         ], 0, 1);
@@ -954,12 +996,22 @@ class relationship_service {
         if (!$scopes) {
             $course = $DB->get_record('course', ['id' => $courseid], 'id,category');
             if ($course) {
-                $scopes = $DB->get_records('tool_guardianlink_scope', [
-                    'relationshipid' => $relationship->id,
-                    'scopekind' => 'category',
-                    'categoryid' => $course->category,
-                    'status' => self::STATUS_ACTIVE,
-                ]);
+                // The category fallback must honour the same active + time-window rules as a direct
+                // scope, otherwise an expired category grant would keep conveying access.
+                $scopes = $DB->get_records_select(
+                    'tool_guardianlink_scope',
+                    'relationshipid = :relationshipid AND scopekind = :scopekind AND categoryid = :categoryid '
+                        . 'AND status = :status AND (starttime = 0 OR starttime <= :now1) '
+                        . 'AND (endtime = 0 OR endtime >= :now2)',
+                    [
+                        'relationshipid' => $relationship->id,
+                        'scopekind' => 'category',
+                        'categoryid' => $course->category,
+                        'status' => self::STATUS_ACTIVE,
+                        'now1' => $now,
+                        'now2' => $now,
+                    ]
+                );
             }
         }
         foreach ($scopes as $scope) {
@@ -1228,17 +1280,39 @@ class relationship_service {
      */
     public static function get_health_records_for_adult(int $adultid, int $learnerid): array {
         global $DB;
-        if (!self::can_access_child($adultid, $learnerid, 0, 'healthsummary')) {
+        // The adult must hold an active, non-restricted relationship to the learner.
+        $relationship = self::get_active_relationship($adultid, $learnerid);
+        if (!$relationship) {
             return [];
         }
         $now = time();
-        $records = $DB->get_records_select(
+        $candidates = $DB->get_records_select(
             'tool_guardianlink_health',
             'childid = :learnerid AND status = :status AND (starttime = 0 OR starttime <= :now1) '
                 . 'AND (endtime = 0 OR endtime >= :now2)',
             ['learnerid' => $learnerid, 'status' => self::STATUS_ACTIVE, 'now1' => $now, 'now2' => $now],
             'severity DESC, title ASC'
         );
+        // Visibility is an allowlist: only these levels are ever shown to an adult. Anything else
+        // (restricted_staff / safeguarding / unknown) stays staff-only and is never released.
+        $adultvisible = ['legal_guardian', 'authorised_care', 'emergency_only'];
+        $records = [];
+        foreach ($candidates as $record) {
+            if (!in_array($record->visibility, $adultvisible, true)) {
+                continue;
+            }
+            // Records visible only to legal guardians require the adult to hold legal responsibility.
+            if ($record->visibility === 'legal_guardian' && empty($relationship->legal)) {
+                continue;
+            }
+            // Re-check the health-summary scope per record: course-scoped records need the scope on
+            // that course; learner-level (courseid = 0) records need the learner-level health scope.
+            $scopecourse = (int)$record->courseid;
+            if (!self::can_access_child($adultid, $learnerid, $scopecourse, 'healthsummary')) {
+                continue;
+            }
+            $records[$record->id] = $record;
+        }
         self::log_access($adultid, $learnerid, 'health_records_viewed', 0, 'health', 0, ['count' => count($records)]);
         return $records;
     }
@@ -1369,7 +1443,7 @@ class relationship_service {
                   JOIN {user} child ON child.id = p.childid
                  WHERE p.status = :pstatus
                    AND r.status = :rstatus
-                   AND r.authoritystatus <> :disputed
+                   AND r.authoritystatus = :verified
                    AND (p.nextsend = 0 OR p.nextsend <= :now1)
                    AND (p.lockeduntil = 0 OR p.lockeduntil < :now2)
                    AND (r.starttime = 0 OR r.starttime <= :now3)
@@ -1380,7 +1454,7 @@ class relationship_service {
         return $DB->get_records_sql($sql, [
             'pstatus' => self::STATUS_ACTIVE,
             'rstatus' => self::STATUS_ACTIVE,
-            'disputed' => 'disputed',
+            'verified' => 'verified',
             'now1' => $now,
             'now2' => $now,
             'now3' => $now,

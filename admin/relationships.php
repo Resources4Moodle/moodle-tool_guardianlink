@@ -106,6 +106,8 @@ if ($form->is_cancelled()) {
     if (isset($data->categoryids) && is_array($data->categoryids)) {
         $data->categoryids = implode(',', array_filter(array_map('intval', $data->categoryids)));
     }
+    // The site registry edits the full course/category scope set, so removed entries are revoked.
+    $data->replacescopes = 1;
     \tool_guardianlink\local\relationship_service::add_or_update_relationship($data, (int)$USER->id, false);
     redirect(
         new moodle_url('/admin/tool/guardianlink/admin/relationships.php'),
