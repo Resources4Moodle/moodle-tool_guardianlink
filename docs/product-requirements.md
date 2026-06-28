@@ -57,7 +57,7 @@ The data model must support:
 - Private tutors and mentors with narrow time-limited access.
 - Adult learners with sponsors, employers, or case workers.
 
-## Acceptance criteria for v0.2.1-alpha
+## Acceptance criteria for v1.0.0-rc1
 
 - Plugin is Moodle 5.2+ only.
 - Admin area is split by responsibility, not stuffed into one settings page.

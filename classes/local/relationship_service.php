@@ -710,6 +710,34 @@ class relationship_service {
     }
 
     /**
+     * Resolve a single course reference (from CSV or a form field) to a Moodle course id.
+     *
+     * Accepts, in order of preference: a numeric course id, a course shortname, or a course
+     * idnumber. This lets integrators and bulk uploaders use stable human-readable keys instead
+     * of internal database ids, which are easy to mistype and differ between sites.
+     *
+     * @param string $ref Raw reference: course id, shortname, or idnumber.
+     * @return int Course id, or 0 if it does not resolve to an existing course.
+     */
+    public static function resolve_course_ref(string $ref): int {
+        global $DB;
+        $ref = trim($ref);
+        if ($ref === '') {
+            return 0;
+        }
+        if (ctype_digit($ref) && $DB->record_exists('course', ['id' => (int)$ref])) {
+            return (int)$ref;
+        }
+        if ($id = $DB->get_field('course', 'id', ['shortname' => $ref], IGNORE_MULTIPLE)) {
+            return (int)$id;
+        }
+        if ($id = $DB->get_field('course', 'id', ['idnumber' => $ref], IGNORE_MULTIPLE)) {
+            return (int)$id;
+        }
+        return 0;
+    }
+
+    /**
      * Build course scopes from form CSV fields.
      *
      * @param int $relationshipid
@@ -729,7 +757,7 @@ class relationship_service {
     ): void {
         $scopes = [];
         foreach (explode(',', (string)self::value($data, 'courseids', '')) as $rawid) {
-            $id = (int)trim($rawid);
+            $id = self::resolve_course_ref((string)$rawid);
             if ($id > 0) {
                 $scopes[] = ['scopekind' => 'course', 'courseid' => $id];
             }

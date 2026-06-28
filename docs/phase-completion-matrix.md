@@ -1,4 +1,4 @@
-# Phase 1-4 completion matrix for v0.2.1-alpha
+# Phase 1-4 completion matrix for v1.0.0-rc1
 
 This document maps the earlier roadmap into the current package. ‚ÄúImplemented‚Äù means the package contains schema/classes/pages/declarations for the feature. It does not mean the feature has passed live Moodle installation QA.
 
@@ -7,7 +7,7 @@ This document maps the earlier roadmap into the current package. ‚ÄúImplemented‚
 | Item | Status in package |
 |---|---|
 | Admin relationship mapping | Implemented through `admin/relationships.php`, relationship form, and relationship service. |
-| Per-course/course-category scopes | Implemented in `local_gl_scope` and service methods. |
+| Per-course/course-category scopes | Implemented in `tool_guardianlink_scope` and service methods. |
 | Family/adult dashboard | Implemented through `index.php`, `child.php`, and `/my/admin.php`. |
 | Teacher proxy contact | Implemented in messaging service, message metadata, recipient resolver, and teacher page; reply UX still needs production hardening. |
 | Expiry task | Implemented in scheduled task and `expire_due_grants()`. |
@@ -30,8 +30,8 @@ This document maps the earlier roadmap into the current package. ‚ÄúImplemented‚
 | Item | Status in package |
 |---|---|
 | SIS/ERP imports | Implemented through Moodle external service declarations and classes. |
-| External identifier mapping | Implemented in `local_gl_extmap`. |
-| Synchronisation audit | Implemented in `local_gl_erpsync` and integrations admin page. |
+| External identifier mapping | Implemented in `tool_guardianlink_extmap`. |
+| Synchronisation audit | Implemented in `tool_guardianlink_erpsync` and integrations admin page. |
 | Policy acknowledgements | Scope fields and relationship consent status exist; deep Moodle policy-tool integration remains future work. |
 | Safeguarding/restricted contact model | Implemented with authority status, confidentiality, restrictions JSON, restricted access profiles, and admin docs. |
 | Multiple households and restrictions | Implemented with household/contact group keys and confidentiality controls. |
@@ -46,7 +46,7 @@ This document maps the earlier roadmap into the current package. ‚ÄúImplemented‚
 | Family dashboard APIs | Initial API implemented through `get_my_learners`; fuller API can follow after QA. |
 | Compatibility with long-tail institutions | Deliberately dropped for 4.5-5.1 in this version, per project decision. |
 
-## Main alpha gaps
+## Remaining gaps before stable 1.0.0
 
 - Live Moodle 5.2 install/upgrade testing.
 - PHPUnit/Behat tests.

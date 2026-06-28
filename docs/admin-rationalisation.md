@@ -1,6 +1,6 @@
 # Admin rationalisation
 
-The first prototype placed too much responsibility into a generic admin/settings area. GuardianLink v0.2.1-alpha reorganises administration around operational responsibility and risk.
+The first prototype placed too much responsibility into a generic admin/settings area. GuardianLink v1.0.0-rc1 reorganises administration around operational responsibility and risk.
 
 ## Admin category
 
@@ -25,27 +25,27 @@ Relationship mapping, health records, external integrations, tutor approval, and
 
 Important system capabilities include:
 
-- `local/guardianlink:manage`
-- `local/guardianlink:maprelationships`
-- `local/guardianlink:configureroles`
-- `local/guardianlink:approvetutors`
-- `local/guardianlink:viewallrelationships`
-- `local/guardianlink:manageorganisations`
-- `local/guardianlink:managehealth`
-- `local/guardianlink:viewhealth`
-- `local/guardianlink:sync`
-- `local/guardianlink:viewaudit`
-- `local/guardianlink:viewreports`
-- `local/guardianlink:managedigests`
+- `tool/guardianlink:manage`
+- `tool/guardianlink:maprelationships`
+- `tool/guardianlink:configureroles`
+- `tool/guardianlink:approvetutors`
+- `tool/guardianlink:viewallrelationships`
+- `tool/guardianlink:manageorganisations`
+- `tool/guardianlink:managehealth`
+- `tool/guardianlink:viewhealth`
+- `tool/guardianlink:sync`
+- `tool/guardianlink:viewaudit`
+- `tool/guardianlink:viewreports`
+- `tool/guardianlink:managedigests`
 
 Course capability:
 
-- `local/guardianlink:sendproxymessages`
+- `tool/guardianlink:sendproxymessages`
 
 The explicit default is that teachers can message through GuardianLink but cannot browse family metadata.
 
 ## Adult-facing child admin
 
-Authorised adults get their own area at `/local/guardianlink/my/admin.php`. This is not Moodle site administration. It is a personal control centre for linked learners, relationships, permitted tutor requests, and later digest preferences.
+Authorised adults get their own area at `/admin/tool/guardianlink/my/admin.php`. This is not Moodle site administration. It is a personal control centre for linked learners, relationships, permitted tutor requests, and later digest preferences.
 
 This distinction is important: a parent should not need site-admin-like screens. They need a family/support dashboard designed around their linked children.

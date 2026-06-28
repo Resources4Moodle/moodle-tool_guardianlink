@@ -1,6 +1,6 @@
 # ERP/SIS API design
 
-GuardianLink v0.2.1-alpha includes Moodle external-service declarations in `db/services.php` and classes under `classes/external/`. The goal is to let a school's central ERP/SIS become the authoritative source for adult details, learner links, care organisations, and health/care summaries.
+GuardianLink v1.0.0-rc1 includes Moodle external-service declarations in `db/services.php` and classes under `classes/external/`. The goal is to let a school's central ERP/SIS become the authoritative source for adult details, learner links, care organisations, and health/care summaries.
 
 ## Security model
 
@@ -16,7 +16,7 @@ GuardianLink v0.2.1-alpha includes Moodle external-service declarations in `db/s
 
 ## Functions
 
-### `local_guardianlink_upsert_relationships`
+### `tool_guardianlink_upsert_relationships`
 
 Creates or updates adult-to-learner relationships. Important fields include:
 
@@ -35,27 +35,27 @@ Creates or updates adult-to-learner relationships. Important fields include:
 
 Scopes can set course/category permissions such as grades, completion, teacher contact, messaging, assisted view, health summary, tutor management, and policy consent.
 
-### `local_guardianlink_revoke_relationships`
+### `tool_guardianlink_revoke_relationships`
 
 Revokes relationships by `sourcecode` and `externalid`. This is preferred to deletion because revocation preserves audit history.
 
-### `local_guardianlink_get_relationships`
+### `tool_guardianlink_get_relationships`
 
 Reads relationship records for reconciliation. Filters include source, external id, adult id, learner id, status, and limit.
 
-### `local_guardianlink_upsert_organisations`
+### `tool_guardianlink_upsert_organisations`
 
 Creates or updates hostels, boarding houses, children's homes, orphanages, welfare agencies, tutoring providers, and similar organisations.
 
-### `local_guardianlink_upsert_health_records`
+### `tool_guardianlink_upsert_health_records`
 
 Creates or updates minimal health/care summaries. This endpoint should be enabled only after health/care governance is agreed.
 
-### `local_guardianlink_get_audit_events`
+### `tool_guardianlink_get_audit_events`
 
 Exports recent audit events for governance or SIEM-style monitoring.
 
-### `local_guardianlink_get_my_learners`
+### `tool_guardianlink_get_my_learners`
 
 Mobile/dashboard helper for the logged-in authorised adult; attached to the official mobile service in the declaration.
 

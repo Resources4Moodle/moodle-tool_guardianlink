@@ -1,6 +1,6 @@
-# GuardianLink roadmap from v0.2.1-alpha onward
+# GuardianLink roadmap from v1.0.0-rc1 onward
 
-## Completed in v0.2.1-alpha package
+## Completed in v1.0.0-rc1 package
 
 - Moodle 5.2+ baseline only.
 - Rationalised admin category.

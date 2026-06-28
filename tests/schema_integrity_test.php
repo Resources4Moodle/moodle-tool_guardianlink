@@ -86,4 +86,41 @@ final class schema_integrity_test extends \advanced_testcase {
             ['relationshipid' => $relid, 'scopekind' => 'course', 'courseid' => $course->id, 'categoryid' => 0]
         ));
     }
+
+    /**
+     * Course references in CSV/forms resolve by short name, ID number, or numeric id; unknown refs map to 0.
+     */
+    public function test_resolve_course_ref(): void {
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course(['shortname' => 'BIOL-101', 'idnumber' => 'SIS-BIO-1']);
+
+        $this->assertSame((int)$course->id, rs::resolve_course_ref((string)$course->id));
+        $this->assertSame((int)$course->id, rs::resolve_course_ref('BIOL-101'));
+        $this->assertSame((int)$course->id, rs::resolve_course_ref('  SIS-BIO-1 '));
+        $this->assertSame(0, rs::resolve_course_ref('NO-SUCH-COURSE'));
+        $this->assertSame(0, rs::resolve_course_ref('999999'));
+        $this->assertSame(0, rs::resolve_course_ref(''));
+    }
+
+    /**
+     * A bulk/CSV grant scoped by course short name lands on the right course.
+     */
+    public function test_csv_courseids_accept_shortname(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course(['shortname' => 'CHEM-7']);
+        $adult = $gen->create_user();
+        $learner = $gen->create_user();
+        rs::ensure_default_profiles();
+        $relid = rs::add_or_update_relationship(['adultid' => $adult->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'accessprofile' => 'family_full'], 2);
+
+        rs::set_scopes_from_csv($relid, ['courseids' => 'CHEM-7'], 2, 'family_full');
+        $this->assertSame(1, $DB->count_records(
+            'tool_guardianlink_scope',
+            ['relationshipid' => $relid, 'scopekind' => 'course', 'courseid' => $course->id]
+        ));
+    }
 }

@@ -1,4 +1,4 @@
-# GuardianLink v0.2.1-alpha test plan
+# GuardianLink v1.0.0-rc1 test plan
 
 ## Installation
 
