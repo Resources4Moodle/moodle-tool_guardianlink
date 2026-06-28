@@ -616,8 +616,10 @@ class relationship_service {
             'endtime' => (int)self::value($data, 'endtime', 0),
             'reviewtime' => (int)self::value($data, 'reviewtime', 0),
             'lastsynced' => $fromapi ? $now : (int)($existing->lastsynced ?? 0),
-            'sourcecode' => $sourcecode,
-            'externalid' => $externalid,
+            // Empty external refs are stored NULL so the unique (sourcecode, externalid) index does not
+            // collide across the many manual relationships that have no external source identity.
+            'sourcecode' => $sourcecode !== '' ? $sourcecode : null,
+            'externalid' => $externalid !== '' ? $externalid : null,
             'sourcerevision' => clean_param((string)self::value($data, 'sourcerevision', ''), PARAM_TEXT),
             'tenantkey' => clean_param((string)self::value($data, 'tenantkey', ''), PARAM_ALPHANUMEXT),
             'restrictionsjson' => self::normalise_json(

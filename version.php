@@ -25,8 +25,9 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'tool_guardianlink';
-$plugin->version   = 2026063016;
+$plugin->version   = 2026063017;
 $plugin->requires  = 2026042000;     // Moodle 5.2.0 or later.
 $plugin->supported = [502, 502];     // Tested on the Moodle 5.2 series.
-$plugin->maturity  = MATURITY_STABLE;
-$plugin->release   = '1.0.0';
+$plugin->maturity  = MATURITY_RC;    // Feature-complete and automated-tested; formal security /
+                                     // accessibility / data-protection review still pending.
+$plugin->release   = '1.0.0-rc1';

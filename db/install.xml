@@ -71,7 +71,7 @@
         <INDEX NAME="authority" UNIQUE="false" FIELDS="authoritystatus,confidentiality"/>
         <INDEX NAME="timelimit" UNIQUE="false" FIELDS="starttime,endtime"/>
         <INDEX NAME="reviewtime" UNIQUE="false" FIELDS="reviewtime"/>
-        <INDEX NAME="external" UNIQUE="false" FIELDS="sourcecode,externalid"/>
+        <INDEX NAME="external" UNIQUE="true" FIELDS="sourcecode,externalid" COMMENT="One relationship per external source identity; empty refs are stored NULL so manual relationships do not collide"/>
       </INDEXES>
     </TABLE>
 
@@ -109,7 +109,7 @@
         <KEY NAME="relfk" TYPE="foreign" FIELDS="relationshipid" REFTABLE="tool_guardianlink_rel" REFFIELDS="id"/>
       </KEYS>
       <INDEXES>
-        <INDEX NAME="relcourse" UNIQUE="false" FIELDS="relationshipid,courseid"/>
+        <INDEX NAME="relscopeidentity" UNIQUE="true" FIELDS="relationshipid,scopekind,courseid,categoryid" COMMENT="One scope row per relationship/scope identity (prevents duplicate scopes)"/>
         <INDEX NAME="relcategory" UNIQUE="false" FIELDS="relationshipid,categoryid"/>
         <INDEX NAME="courseid" UNIQUE="false" FIELDS="courseid"/>
         <INDEX NAME="statusend" UNIQUE="false" FIELDS="status,endtime"/>

@@ -258,5 +258,68 @@ function xmldb_tool_guardianlink_upgrade(int $oldversion): bool {
         upgrade_plugin_savepoint(true, 2026063016, 'tool', 'guardianlink');
     }
 
+    // 1.0.1: enforce uniqueness for external source identities and scope identities.
+    if ($oldversion < 2026063017) {
+        // Empty external refs become NULL so the unique index does not collide across manual rows.
+        $DB->execute("UPDATE {tool_guardianlink_rel} SET sourcecode = NULL WHERE sourcecode = ?", ['']);
+        $DB->execute("UPDATE {tool_guardianlink_rel} SET externalid = NULL WHERE externalid = ?", ['']);
+
+        // Repair any pre-existing duplicate external identities (keep the lowest id; null the rest).
+        $dupes = $DB->get_records_sql(
+            "SELECT MIN(id) AS keepid, sourcecode, externalid
+               FROM {tool_guardianlink_rel}
+              WHERE sourcecode IS NOT NULL AND externalid IS NOT NULL
+           GROUP BY sourcecode, externalid
+             HAVING COUNT(*) > 1"
+        );
+        foreach ($dupes as $dupe) {
+            $DB->execute(
+                "UPDATE {tool_guardianlink_rel} SET sourcecode = NULL, externalid = NULL "
+                    . "WHERE sourcecode = ? AND externalid = ? AND id <> ?",
+                [$dupe->sourcecode, $dupe->externalid, $dupe->keepid]
+            );
+        }
+
+        // Repair duplicate scope identities (keep the lowest id; delete the rest).
+        $scopedupes = $DB->get_records_sql(
+            "SELECT MIN(id) AS keepid, relationshipid, scopekind, courseid, categoryid
+               FROM {tool_guardianlink_scope}
+           GROUP BY relationshipid, scopekind, courseid, categoryid
+             HAVING COUNT(*) > 1"
+        );
+        foreach ($scopedupes as $dupe) {
+            $DB->execute(
+                "DELETE FROM {tool_guardianlink_scope} "
+                    . "WHERE relationshipid = ? AND scopekind = ? AND courseid = ? AND categoryid = ? AND id <> ?",
+                [$dupe->relationshipid, $dupe->scopekind, $dupe->courseid, $dupe->categoryid, $dupe->keepid]
+            );
+        }
+
+        $reltable = new xmldb_table('tool_guardianlink_rel');
+        $oldexternal = new xmldb_index('external', XMLDB_INDEX_NOTUNIQUE, ['sourcecode', 'externalid']);
+        if ($dbman->index_exists($reltable, $oldexternal)) {
+            $dbman->drop_index($reltable, $oldexternal);
+        }
+        $newexternal = new xmldb_index('external', XMLDB_INDEX_UNIQUE, ['sourcecode', 'externalid']);
+        if (!$dbman->index_exists($reltable, $newexternal)) {
+            $dbman->add_index($reltable, $newexternal);
+        }
+
+        $scopetable = new xmldb_table('tool_guardianlink_scope');
+        $oldrelcourse = new xmldb_index('relcourse', XMLDB_INDEX_NOTUNIQUE, ['relationshipid', 'courseid']);
+        if ($dbman->index_exists($scopetable, $oldrelcourse)) {
+            $dbman->drop_index($scopetable, $oldrelcourse);
+        }
+        $scopeidentity = new xmldb_index(
+            'relscopeidentity',
+            XMLDB_INDEX_UNIQUE,
+            ['relationshipid', 'scopekind', 'courseid', 'categoryid']
+        );
+        if (!$dbman->index_exists($scopetable, $scopeidentity)) {
+            $dbman->add_index($scopetable, $scopeidentity);
+        }
+        upgrade_plugin_savepoint(true, 2026063017, 'tool', 'guardianlink');
+    }
+
     return true;
 }

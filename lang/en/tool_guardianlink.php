@@ -359,6 +359,7 @@ $string['ph_testname'] = 'Name of the selected test/activity';
 $string['ph_testresult'] = 'Learner\'s result in the selected test/activity';
 $string['pluginname'] = 'GuardianLink';
 $string['preview'] = 'Preview';
+$string['privacy:erased'] = 'Redacted in response to a data deletion request.';
 $string['privacy:metadata'] = 'GuardianLink stores authorised-adult relationships, scoped learner access grants, access logs, tutor requests, organisation records, restricted health summaries, proxy message metadata, sync logs, and notification preferences.';
 $string['privacy:metadata:tool_guardianlink_accesslog'] = 'Access and synchronisation audit log.';
 $string['privacy:metadata:tool_guardianlink_courseconfig'] = 'Per-course GuardianLink policy, including the staff member who set it.';

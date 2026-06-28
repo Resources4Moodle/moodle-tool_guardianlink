@@ -257,23 +257,64 @@ class provider implements
     }
 
     /**
-     * Delete all data in a context. Audit-preserving by default.
+     * Erase a user's deletable GuardianLink personal data and anonymise their messages.
+     *
+     * The deletion model has three documented tiers:
+     *  - Deleted now (no retention basis): the user's digest preferences and policy/consent records.
+     *  - Anonymised now (free-text communications): the subject/body of message threads the user took
+     *    part in are redacted (the thread shell is kept so the other party's record stays coherent;
+     *    GuardianLink never stored contact details in it).
+     *  - Retained (statutory safeguarding / audit / legal): relationships, scopes, the access log,
+     *    health/care summaries, tutor requests, proof, independent-access acknowledgements and
+     *    organisation membership are kept under the institution's documented retention policy and are
+     *    anonymised or purged through that governed workflow, not by an automatic erasure request.
+     *
+     * @param int $userid
+     */
+    protected static function erase_user_data(int $userid): void {
+        global $DB;
+        $DB->delete_records_select(
+            'tool_guardianlink_digestpref',
+            'guardianid = :a OR childid = :b',
+            ['a' => $userid, 'b' => $userid]
+        );
+        $DB->delete_records_select(
+            'tool_guardianlink_policy',
+            'userid = :a OR childid = :b',
+            ['a' => $userid, 'b' => $userid]
+        );
+        $redacted = get_string('privacy:erased', 'tool_guardianlink');
+        $threads = $DB->get_records_select(
+            'tool_guardianlink_msgthread',
+            'teacherid = :a OR guardianid = :b OR childid = :c',
+            ['a' => $userid, 'b' => $userid, 'c' => $userid]
+        );
+        foreach ($threads as $thread) {
+            $thread->subject = $redacted;
+            $thread->lastmessage = $redacted;
+            $thread->timemodified = time();
+            $DB->update_record('tool_guardianlink_msgthread', $thread);
+        }
+    }
+
+    /**
+     * Delete deletable data for everyone in a (user) context; retains safeguarding/audit records.
      *
      * @param \context $context
      */
     public static function delete_data_for_all_users_in_context(\context $context): void {
-        // Do not automatically delete records from a user context. Relationship,
-        // access, and health/care summaries may be legal or safeguarding records.
+        if ($context->contextlevel === CONTEXT_USER) {
+            self::erase_user_data((int)$context->instanceid);
+        }
     }
 
     /**
-     * Delete data for a user. Audit-preserving by default.
+     * Delete deletable data for the requesting user; retains safeguarding/audit records.
      *
      * @param approved_contextlist $contextlist
      */
     public static function delete_data_for_user(approved_contextlist $contextlist): void {
-        // Retention and anonymisation should be performed through an approved
-        // institutional workflow, not automatic user-context deletion.
+        self::erase_user_data((int)$contextlist->get_user()->id);
     }
 
     /**
@@ -319,7 +360,12 @@ class provider implements
      * @param approved_userlist $userlist
      */
     public static function delete_data_for_users(approved_userlist $userlist): void {
-        // Same audit-preserving policy as delete_data_for_user().
+        if ($userlist->get_context()->contextlevel !== CONTEXT_USER) {
+            return;
+        }
+        foreach ($userlist->get_userids() as $userid) {
+            self::erase_user_data((int)$userid);
+        }
     }
 
     /**
