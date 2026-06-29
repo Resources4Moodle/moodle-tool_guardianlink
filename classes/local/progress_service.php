@@ -139,16 +139,27 @@ class progress_service {
      */
     public static function class_average(int $courseid): ?float {
         global $CFG, $DB;
+        // The class average is a course-level value, identical for every recipient of a bulk send or
+        // digest. Memoise it in the per-request cache so a 500-recipient send computes it once, not
+        // 500 times. A request cache (not a static) is used so the value never leaks across PHPUnit
+        // tests, which the framework purges between runs. 'null' marks "computed: no grades".
+        $cache = \cache::make_from_params(\cache_store::MODE_REQUEST, 'tool_guardianlink', 'classaverage');
+        $cached = $cache->get($courseid);
+        if ($cached !== false) {
+            return $cached === 'null' ? null : (float)$cached;
+        }
         require_once($CFG->libdir . '/gradelib.php');
         $item = \grade_item::fetch_course_item($courseid);
-        if (!$item) {
-            return null;
+        $result = null;
+        if ($item) {
+            $avg = $DB->get_field_sql(
+                "SELECT AVG(finalgrade) FROM {grade_grades} WHERE itemid = :iid AND finalgrade IS NOT NULL",
+                ['iid' => $item->id]
+            );
+            $result = ($avg !== null && $avg !== false) ? (float)$avg : null;
         }
-        $avg = $DB->get_field_sql(
-            "SELECT AVG(finalgrade) FROM {grade_grades} WHERE itemid = :iid AND finalgrade IS NOT NULL",
-            ['iid' => $item->id]
-        );
-        return ($avg !== null && $avg !== false) ? (float)$avg : null;
+        $cache->set($courseid, $result === null ? 'null' : (string)$result);
+        return $result;
     }
 
     /**
