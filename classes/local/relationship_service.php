@@ -2497,6 +2497,8 @@ class relationship_service {
      *
      * @param int $relationshipid
      * @param string $field
+     * @param bool $requirelearnerscope When true, only a learner/site scope satisfies (a course
+     *                                  scope must not grant a learner-wide privilege such as health).
      * @return bool
      */
     private static function relationship_has_permission_scope(

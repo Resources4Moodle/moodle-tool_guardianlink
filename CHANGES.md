@@ -2,6 +2,37 @@
 
 All notable changes to this plugin are documented here.
 
+## v1.0.0-rc2 (2026) — 2026063018
+
+Second release candidate. Resolves the findings of an in-depth security review (two Critical and
+ten High issues) plus a contained performance improvement.
+
+- **Adult-facing access invariant (Critical):** only a verified, active, in-date relationship may
+  expose learner data. Active-but-unverified relationships no longer pass overview/calendar checks
+  or appear in adult-facing lists.
+- **Learner dashboard (Critical):** child.php now renders only from active, in-date scopes and
+  re-checks every feature (grades/attendance/teacher-contact/assisted) per course via
+  can_access_child(), so expired/revoked/future scopes cannot expose data.
+- **Recipient eligibility:** proxy and bulk messaging share one scope-eligibility helper that
+  honours scope time windows and category scopes; bulk messaging always requires a verified
+  relationship (restricted/unverified can no longer slip through).
+- **Health visibility:** a course-specific health scope no longer satisfies a learner-level health
+  check (learner/site scope required).
+- **Grades:** grade items are course-bound (a tampered grade-item id cannot leak another course's
+  grade); the teacher dashboard gates grade display on moodle/grade:viewall.
+- **Enrolment/course validation:** teacher send pages, tutor-request scopes, independent-access
+  acknowledgements and course-specific health records all validate learner enrolment / course
+  offering / requester scope server-side.
+- **Immediate de-provisioning:** revoke, restriction, dispute and expiry strip standing role grants
+  (auto-assigned role and assisted course-views) synchronously; cleanup tasks are only a backstop.
+- **Atomic upserts:** relationship, scope, external-map and audit writes commit in one delegated
+  transaction; scope kinds are validated against a whitelist before any write.
+- **Privacy export:** subject-access export now covers the requester in every role (learner, adult,
+  teacher) rather than only when exporting their own user context.
+- **Performance:** the course-level class average is memoised per request (computed once per send,
+  not once per recipient). Larger scaling items (queued bulk sends, overdue snapshots, dashboard
+  pagination, batched ERP upserts) are documented as deliberate follow-ups.
+
 ## v1.0.0-rc1 (2026) — 2026063017
 
 First release candidate for Moodle 5.2+. Feature-complete and covered by automated tests;
