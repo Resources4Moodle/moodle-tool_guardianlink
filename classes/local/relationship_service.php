@@ -44,6 +44,8 @@ class relationship_service {
     public const STATUS_REVOKED = 'revoked';
     /** @var string Relationship request was rejected. */
     public const STATUS_REJECTED = 'rejected';
+    /** @var string The only authority status that may expose learner data (adult-facing access invariant). */
+    public const AUTHORITY_VERIFIED = 'verified';
 
     /**
      * Default relationship role taxonomy. Schools can add their own records.
@@ -889,7 +891,7 @@ class relationship_service {
                   JOIN {user} u ON u.id = r.childid
                  WHERE r.guardianid = :adultid
                    AND r.status = :status
-                   AND r.authoritystatus NOT IN (:revoked, :restricted, :disputed)
+                   AND r.authoritystatus = :verified
                    AND (r.starttime = 0 OR r.starttime <= :now1)
                    AND (r.endtime = 0 OR r.endtime >= :now2)
                    AND u.deleted = 0
@@ -897,9 +899,7 @@ class relationship_service {
         return $DB->get_records_sql($sql, [
             'adultid' => $adultid,
             'status' => self::STATUS_ACTIVE,
-            'revoked' => self::STATUS_REVOKED,
-            'restricted' => 'restricted',
-            'disputed' => 'disputed',
+            'verified' => self::AUTHORITY_VERIFIED,
             'now1' => $now,
             'now2' => $now,
         ]);
@@ -925,14 +925,16 @@ class relationship_service {
     public static function get_active_relationship(int $adultid, int $learnerid): ?object {
         global $DB;
         $now = time();
-        // Revoked, restricted-contact and disputed relationships convey no access and must not even
-        // surface in adult-facing lookups (they must not leak that a learner is linked).
+        // Adult-facing access invariant: only a VERIFIED, active, in-date relationship may convey
+        // access or even surface in adult-facing lookups. Requiring verified (rather than just
+        // excluding revoked/restricted/disputed) also denies active-but-unverified relationships,
+        // which must not expose any learner data until an administrator verifies authority.
         $sql = "SELECT *
                   FROM {tool_guardianlink_rel}
                  WHERE guardianid = :adultid
                    AND childid = :learnerid
                    AND status = :status
-                   AND authoritystatus NOT IN (:revoked, :restricted, :disputed)
+                   AND authoritystatus = :verified
                    AND (starttime = 0 OR starttime <= :now1)
                    AND (endtime = 0 OR endtime >= :now2)
               ORDER BY legal DESC, endtime ASC, id DESC";
@@ -940,9 +942,7 @@ class relationship_service {
             'adultid' => $adultid,
             'learnerid' => $learnerid,
             'status' => self::STATUS_ACTIVE,
-            'revoked' => self::STATUS_REVOKED,
-            'restricted' => 'restricted',
-            'disputed' => 'disputed',
+            'verified' => self::AUTHORITY_VERIFIED,
             'now1' => $now,
             'now2' => $now,
         ], 0, 1);
@@ -960,6 +960,33 @@ class relationship_service {
         return $DB->get_records(
             'tool_guardianlink_scope',
             ['relationshipid' => $relationshipid],
+            'scopekind ASC, courseid ASC, categoryid ASC'
+        );
+    }
+
+    /**
+     * Active, in-date scopes for a relationship — the only scopes that may expose data.
+     *
+     * Unlike get_scopes(), this filters to status = active within the start/end window. Callers that
+     * render adult-facing dashboards must use this (and re-check each feature via can_access_child),
+     * so an expired, future, or revoked scope row can never influence what is shown.
+     *
+     * @param int $relationshipid
+     * @return array
+     */
+    public static function get_active_scopes(int $relationshipid): array {
+        global $DB;
+        $now = time();
+        return $DB->get_records_select(
+            'tool_guardianlink_scope',
+            'relationshipid = :relationshipid AND status = :status'
+                . ' AND (starttime = 0 OR starttime <= :now1) AND (endtime = 0 OR endtime >= :now2)',
+            [
+                'relationshipid' => $relationshipid,
+                'status' => self::STATUS_ACTIVE,
+                'now1' => $now,
+                'now2' => $now,
+            ],
             'scopekind ASC, courseid ASC, categoryid ASC'
         );
     }
@@ -1003,8 +1030,10 @@ class relationship_service {
         if (!$relationship) {
             return false;
         }
-        // Safeguarding: revoked, disputed, or restricted-contact relationships convey no access.
-        if (in_array($relationship->authoritystatus, ['revoked', 'disputed', 'restricted'], true)) {
+        // Adult-facing access invariant (defence in depth; get_active_relationship already enforces
+        // it): only a verified relationship conveys access. This also denies active-but-unverified
+        // relationships and any future non-verified authority status.
+        if ($relationship->authoritystatus !== self::AUTHORITY_VERIFIED) {
             return false;
         }
         if ($permission === 'assisted' && !self::assisted_feature_enabled()) {
@@ -1021,7 +1050,10 @@ class relationship_service {
             if (in_array($permission, ['overview', 'calendar'], true)) {
                 return true;
             }
-            return self::relationship_has_permission_scope((int)$relationship->id, $field);
+            // Learner-level health is special-category data: a single course-specific health scope
+            // must NEVER satisfy a learner-wide health check, so require a learner or site scope here.
+            $requirelearnerscope = ($permission === 'healthsummary');
+            return self::relationship_has_permission_scope((int)$relationship->id, $field, $requirelearnerscope);
         }
         $now = time();
         $params = [
@@ -2339,7 +2371,11 @@ class relationship_service {
      * @param string $field
      * @return bool
      */
-    private static function relationship_has_permission_scope(int $relationshipid, string $field): bool {
+    private static function relationship_has_permission_scope(
+        int $relationshipid,
+        string $field,
+        bool $requirelearnerscope = false
+    ): bool {
         global $DB;
         $allowedfields = array_values(array_unique(array_map([self::class, 'permission_field'], [
             'overview', 'grades', 'completion', 'activities', 'attendance', 'calendar',
@@ -2349,11 +2385,17 @@ class relationship_service {
             return false;
         }
         $now = time();
+        $select = "relationshipid = :relationshipid AND status = :status AND {$field} = 1" .
+            " AND (starttime = 0 OR starttime <= :now1)" .
+            " AND (endtime = 0 OR endtime >= :now2)";
+        if ($requirelearnerscope) {
+            // A learner-wide privilege must be backed by a learner/site scope. A course-specific scope
+            // only grants the permission for that one course and must NOT satisfy a learner-level check.
+            $select .= " AND scopekind IN ('learner', 'site')";
+        }
         return $DB->record_exists_select(
             'tool_guardianlink_scope',
-            "relationshipid = :relationshipid AND status = :status AND {$field} = 1" .
-            " AND (starttime = 0 OR starttime <= :now1)" .
-            " AND (endtime = 0 OR endtime >= :now2)",
+            $select,
             ['relationshipid' => $relationshipid, 'status' => self::STATUS_ACTIVE, 'now1' => $now, 'now2' => $now]
         );
     }

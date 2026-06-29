@@ -55,6 +55,28 @@ final class security_test extends \advanced_testcase {
     }
 
     /**
+     * An active-but-unverified relationship must not convey access, appear in lists, or resolve as active.
+     */
+    public function test_unverified_relationship_conveys_no_access(): void {
+        global $DB;
+        $this->resetAfterTest();
+        [$course, $adult, $learner, $relid] = $this->base();
+        // Sanity: verified relationship grants overview/calendar and shows in lists.
+        $this->assertNotNull(rs::get_active_relationship($adult->id, $learner->id));
+        $this->assertTrue(rs::can_access_child($adult->id, $learner->id, 0, 'overview'));
+
+        // Flip authority to unverified while leaving status active (the dangerous anomaly).
+        $DB->set_field('tool_guardianlink_rel', 'authoritystatus', 'unverified', ['id' => $relid]);
+
+        $this->assertNull(rs::get_active_relationship($adult->id, $learner->id));
+        $ids = array_map(fn($r) => (int)$r->childid, rs::get_learners_for_adult($adult->id));
+        $this->assertNotContains((int)$learner->id, $ids);
+        $this->assertFalse(rs::can_access_child($adult->id, $learner->id, 0, 'overview'));
+        $this->assertFalse(rs::can_access_child($adult->id, $learner->id, 0, 'calendar'));
+        $this->assertFalse(rs::can_access_child($adult->id, $learner->id, $course->id, 'grades'));
+    }
+
+    /**
      * A restricted relationship must vanish from adult-facing lists and lookups (no linkage leak).
      */
     public function test_restricted_relationship_hidden_from_lists(): void {
@@ -181,6 +203,34 @@ final class security_test extends \advanced_testcase {
         $this->assertContains('Allergy', $nonlegaltitles);
         $this->assertNotContains('StaffOnly', $nonlegaltitles);
         $this->assertNotContains('LegalOnly', $nonlegaltitles, 'legal_guardian record needs a legal holder');
+    }
+
+    /**
+     * A course-specific health scope must not satisfy a learner-level health check (#5).
+     */
+    public function test_course_health_scope_does_not_expose_learner_level_health(): void {
+        $this->resetAfterTest();
+        set_config('enablehealthrecords', 1, 'tool_guardianlink');
+        set_config('requirehealthapproval', 0, 'tool_guardianlink');
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course();
+        $learner = $gen->create_user();
+        $adult = $gen->create_user();
+        rs::ensure_default_profiles();
+        $rel = rs::add_or_update_relationship([
+            'adultid' => $adult->id, 'learnerid' => $learner->id, 'reltype' => 'legal_parent',
+            'status' => 'active', 'authoritystatus' => 'verified', 'legal' => 1, 'accessprofile' => 'family_full',
+        ], 2);
+        // Only a COURSE-scoped health permission — no learner/site health scope.
+        rs::set_scopes($rel, [['scopekind' => 'course', 'courseid' => $course->id, 'allowhealthsummary' => 1]], 2);
+
+        // A learner-level (courseid = 0) health record must NOT be exposed by the course scope.
+        rs::upsert_health_record(['childid' => $learner->id, 'title' => 'LearnerWideAllergy',
+            'visibility' => 'emergency_only', 'status' => 'active', 'courseid' => 0], 2);
+
+        $this->assertFalse(rs::can_access_child($adult->id, $learner->id, 0, 'healthsummary'));
+        $titles = array_map(fn($r) => $r->title, rs::get_health_records_for_adult($adult->id, $learner->id));
+        $this->assertNotContains('LearnerWideAllergy', $titles);
     }
 
     /**

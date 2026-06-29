@@ -25,6 +25,8 @@
 require_once(__DIR__ . '/../../../config.php');
 require_once($CFG->libdir . '/enrollib.php');
 
+use tool_guardianlink\local\relationship_service;
+
 $childid = required_param('id', PARAM_INT);
 $courseid = optional_param('courseid', 0, PARAM_INT);
 
@@ -53,8 +55,10 @@ $PAGE->set_heading(get_string('pluginname', 'tool_guardianlink'));
     ['courseid' => $courseid]
 );
 
-$relationship = \tool_guardianlink\local\relationship_service::get_active_relationship((int)$USER->id, $childid);
-$scopes = $relationship ? \tool_guardianlink\local\relationship_service::get_scopes((int)$relationship->id) : [];
+$relationship = relationship_service::get_active_relationship((int)$USER->id, $childid);
+// Only active, in-date scopes may surface; every feature cell below is independently re-checked via
+// can_access_child(), so an expired/revoked/future scope can never expose grades or contacts.
+$scopes = $relationship ? relationship_service::get_active_scopes((int)$relationship->id) : [];
 $allcourses = enrol_get_users_courses($childid, true, 'id, shortname, fullname, visible, startdate, enddate');
 $health = \tool_guardianlink\local\relationship_service::get_health_records_for_adult((int)$USER->id, $childid);
 
@@ -95,44 +99,42 @@ $table->head = [
 foreach ($scopes as $scope) {
     if (!empty($scope->courseid) && !empty($allcourses[$scope->courseid])) {
         $course = $allcourses[$scope->courseid];
+        $cid = (int)$course->id;
+        // Re-check every feature against the live invariant (verified + active + in-date scope) for
+        // THIS course, instead of trusting the raw scope flags.
+        $cangrades = relationship_service::can_access_child((int)$USER->id, $childid, $cid, 'grades');
+        $canattendance = relationship_service::can_access_child((int)$USER->id, $childid, $cid, 'attendance');
+        $canteacher = relationship_service::can_access_child((int)$USER->id, $childid, $cid, 'teachercontact');
         $actions = [];
-        if ($scope->allowteachercontact) {
+        if ($canteacher) {
             $actions[] = html_writer::link(
                 new moodle_url(
                     '/admin/tool/guardianlink/teachers.php',
-                    ['childid' => $childid, 'courseid' => $course->id]
+                    ['childid' => $childid, 'courseid' => $cid]
                 ),
                 get_string('teachers', 'tool_guardianlink')
             );
         }
         // Governed assisted access: only offered when every gate currently passes.
         if (
-            !empty($scope->allowassisted)
-                && \tool_guardianlink\local\relationship_service::assisted_access_status(
-                    (int)$USER->id,
-                    $childid,
-                    (int)$course->id
-                )['allowed']
+            relationship_service::can_access_child((int)$USER->id, $childid, $cid, 'assisted')
+                && relationship_service::assisted_access_status((int)$USER->id, $childid, $cid)['allowed']
         ) {
             $actions[] = html_writer::link(
                 new moodle_url(
                     '/admin/tool/guardianlink/assist.php',
-                    ['childid' => $childid, 'courseid' => $course->id]
+                    ['childid' => $childid, 'courseid' => $cid]
                 ),
                 get_string('assistedstart', 'tool_guardianlink')
             );
         }
         $contact = $actions ? implode(' | ', $actions) : '-';
-        // Real progress data (read-only), honouring the grades scope.
-        $progress = \tool_guardianlink\local\progress_service::course_progress(
-            (int)$course->id,
-            $childid,
-            !empty($scope->allowgrades)
-        );
+        // Real progress data (read-only), honouring the re-checked grades permission.
+        $progress = \tool_guardianlink\local\progress_service::course_progress($cid, $childid, $cangrades);
         $progresscell = $progress->completionpercent === null
             ? get_string('nocompletion', 'tool_guardianlink')
             : $progress->completionpercent . '% (' . $progress->completed . '/' . $progress->total . ')';
-        $gradecell = !empty($scope->allowgrades)
+        $gradecell = $cangrades
             ? ($progress->coursegrade !== null ? s($progress->coursegrade) : '-')
             : get_string('notpermitted', 'tool_guardianlink');
         $overduecell = $progress->overdue > 0
@@ -143,7 +145,7 @@ foreach ($scopes as $scope) {
             $progresscell,
             $gradecell,
             $overduecell,
-            $scope->allowattendance ? get_string('yes') : get_string('no'),
+            $canattendance ? get_string('yes') : get_string('no'),
             $contact,
         ];
     } else if (!empty($scope->courseid)) {
