@@ -195,65 +195,92 @@ class provider implements
      */
     public static function export_user_data(approved_contextlist $contextlist): void {
         global $DB;
-        $userid = $contextlist->get_user()->id;
+        $userid = (int)$contextlist->get_user()->id;
+        // Every declared context is a LEARNER user context (instanceid = childid). The requesting user
+        // may be that learner OR an adult/teacher/actor linked to them, so we export, per learner
+        // context, all rows where the requester participates AND the row concerns that learner.
+        // (The previous implementation skipped any context whose instanceid was not the requester, so
+        // adults' and teachers' data — stored against learners' contexts — never exported.)
         foreach ($contextlist->get_contexts() as $context) {
-            if ($context->contextlevel !== CONTEXT_USER || (int)$context->instanceid !== (int)$userid) {
+            if ($context->contextlevel !== CONTEXT_USER) {
                 continue;
             }
+            $learnerid = (int)$context->instanceid;
             $data = (object)[
-                'relationships' => array_values(array_map([self::class, 'exportable_record'], $DB->get_records_select(
+                'relationships' => self::export_rows(
                     'tool_guardianlink_rel',
-                    'guardianid = :userid1 OR childid = :userid2',
-                    ['userid1' => $userid, 'userid2' => $userid]
-                ))),
-                'recentaccesslog' => array_values(array_map([self::class, 'exportable_record'], $DB->get_records_select(
+                    'childid = :l AND (guardianid = :u1 OR childid = :u2)',
+                    ['l' => $learnerid, 'u1' => $userid, 'u2' => $userid]
+                ),
+                'recentaccesslog' => self::export_rows(
                     'tool_guardianlink_accesslog',
-                    'actorid = :userid1 OR childid = :userid2',
-                    ['userid1' => $userid, 'userid2' => $userid],
+                    'childid = :l AND (actorid = :u1 OR childid = :u2)',
+                    ['l' => $learnerid, 'u1' => $userid, 'u2' => $userid],
                     'timecreated DESC',
-                    '*',
-                    0,
                     500
-                ))),
-                'healthrecords' => array_values(array_map([self::class, 'exportable_record'], $DB->get_records(
+                ),
+                'healthrecords' => self::export_rows(
                     'tool_guardianlink_health',
-                    ['childid' => $userid],
+                    'childid = :l AND (childid = :u1 OR createdby = :u2 OR approvedby = :u3)',
+                    ['l' => $learnerid, 'u1' => $userid, 'u2' => $userid, 'u3' => $userid],
                     'timemodified DESC'
-                ))),
-                'tutorrequests' => array_values(array_map([self::class, 'exportable_record'], $DB->get_records_select(
+                ),
+                'tutorrequests' => self::export_rows(
                     'tool_guardianlink_tutorreq',
-                    'requesterid = :userid1 OR tutorid = :userid2 OR childid = :userid3',
-                    ['userid1' => $userid, 'userid2' => $userid, 'userid3' => $userid],
+                    'childid = :l AND (requesterid = :u1 OR tutorid = :u2 OR childid = :u3)',
+                    ['l' => $learnerid, 'u1' => $userid, 'u2' => $userid, 'u3' => $userid],
                     'timemodified DESC'
-                ))),
-                'digestpreferences' => array_values(array_map([self::class, 'exportable_record'], $DB->get_records_select(
+                ),
+                'digestpreferences' => self::export_rows(
                     'tool_guardianlink_digestpref',
-                    'guardianid = :userid1 OR childid = :userid2',
-                    ['userid1' => $userid, 'userid2' => $userid]
-                ))),
-                'policyacknowledgements' => array_values(array_map([self::class, 'exportable_record'], $DB->get_records_select(
+                    'childid = :l AND (guardianid = :u1 OR childid = :u2)',
+                    ['l' => $learnerid, 'u1' => $userid, 'u2' => $userid]
+                ),
+                'policyacknowledgements' => self::export_rows(
                     'tool_guardianlink_policy',
-                    'userid = :userid1 OR childid = :userid2',
-                    ['userid1' => $userid, 'userid2' => $userid]
-                ))),
-                'messagethreads' => array_values(array_map([self::class, 'exportable_record'], $DB->get_records_select(
+                    'childid = :l AND (userid = :u1 OR childid = :u2)',
+                    ['l' => $learnerid, 'u1' => $userid, 'u2' => $userid]
+                ),
+                'messagethreads' => self::export_rows(
                     'tool_guardianlink_msgthread',
-                    'teacherid = :userid1 OR guardianid = :userid2 OR childid = :userid3',
-                    ['userid1' => $userid, 'userid2' => $userid, 'userid3' => $userid],
+                    'childid = :l AND (teacherid = :u1 OR guardianid = :u2 OR childid = :u3)',
+                    ['l' => $learnerid, 'u1' => $userid, 'u2' => $userid, 'u3' => $userid],
                     'timemodified DESC'
-                ))),
-                'independentaccess' => array_values(array_map([self::class, 'exportable_record'], $DB->get_records_select(
+                ),
+                'independentaccess' => self::export_rows(
                     'tool_guardianlink_indack',
-                    'guardianid = :userid1 OR childid = :userid2',
-                    ['userid1' => $userid, 'userid2' => $userid],
+                    'childid = :l AND (guardianid = :u1 OR childid = :u2)',
+                    ['l' => $learnerid, 'u1' => $userid, 'u2' => $userid],
                     'timemodified DESC'
-                ))),
+                ),
             ];
             \core_privacy\local\request\writer::with_context($context)->export_data(
                 [get_string('pluginname', 'tool_guardianlink')],
                 $data
             );
         }
+    }
+
+    /**
+     * Fetch and normalise a set of rows for export.
+     *
+     * @param string $table Table name (without prefix)
+     * @param string $select SQL WHERE fragment
+     * @param array $params Named parameters
+     * @param string $sort Optional ORDER BY clause
+     * @param int $limit Optional row cap (0 = no cap)
+     * @return array Exportable records
+     */
+    private static function export_rows(
+        string $table,
+        string $select,
+        array $params,
+        string $sort = '',
+        int $limit = 0
+    ): array {
+        global $DB;
+        $records = $DB->get_records_select($table, $select, $params, $sort, '*', 0, $limit);
+        return array_values(array_map([self::class, 'exportable_record'], $records));
     }
 
     /**

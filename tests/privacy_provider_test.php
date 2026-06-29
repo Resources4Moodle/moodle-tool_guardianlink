@@ -25,6 +25,7 @@
 namespace tool_guardianlink;
 
 use core_privacy\local\request\approved_contextlist;
+use core_privacy\local\request\writer;
 use tool_guardianlink\local\relationship_service as rs;
 use tool_guardianlink\local\message_service as ms;
 use tool_guardianlink\privacy\provider;
@@ -81,6 +82,64 @@ final class privacy_provider_test extends \advanced_testcase {
         $this->assertSame(get_string('privacy:erased', 'tool_guardianlink'), $thread->lastmessage);
         // Retained (safeguarding/audit): the relationship record survives.
         $this->assertTrue($DB->record_exists('tool_guardianlink_rel', ['id' => $relid]));
+    }
+
+    /**
+     * Export must cover the requester in EVERY participant role — learner, adult and teacher —
+     * not only when exporting their own user context (#9).
+     */
+    public function test_export_covers_adult_learner_and_teacher_roles(): void {
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course();
+        $teacher = $gen->create_user();
+        $adult = $gen->create_user();
+        $learner = $gen->create_user();
+        $gen->enrol_user($learner->id, $course->id);
+        $gen->enrol_user($teacher->id, $course->id, 'editingteacher');
+        rs::ensure_default_profiles();
+        rs::add_or_update_relationship([
+            'adultid' => $adult->id, 'learnerid' => $learner->id, 'reltype' => 'legal_parent',
+            'status' => 'active', 'authoritystatus' => 'verified', 'accessprofile' => 'family_full',
+            'courseids' => (string)$course->id,
+        ], 2);
+        $this->redirectMessages();
+        ms::send_proxy_message($teacher->id, $learner->id, $course->id, 'A subject', 'A body');
+
+        $learnercontext = \context_user::instance($learner->id);
+        $subctx = [get_string('pluginname', 'tool_guardianlink')];
+
+        // ADULT: their relationship must export under the learner's context (previously skipped).
+        $this->export_for($adult);
+        $writer = writer::with_context($learnercontext);
+        $this->assertTrue($writer->has_any_data());
+        $this->assertNotEmpty($writer->get_data($subctx)->relationships);
+        writer::reset();
+
+        // TEACHER: their message thread must export under the learner's context (previously skipped).
+        $this->export_for($teacher);
+        $writer = writer::with_context($learnercontext);
+        $this->assertTrue($writer->has_any_data());
+        $this->assertNotEmpty($writer->get_data($subctx)->messagethreads);
+        writer::reset();
+
+        // LEARNER: their own context still exports their relationship.
+        $this->export_for($learner);
+        $writer = writer::with_context($learnercontext);
+        $this->assertTrue($writer->has_any_data());
+        $this->assertNotEmpty($writer->get_data($subctx)->relationships);
+    }
+
+    /**
+     * Export a user's GuardianLink data into the privacy writer.
+     *
+     * @param \stdClass $user
+     */
+    private function export_for(\stdClass $user): void {
+        writer::reset();
+        $contextlist = provider::get_contexts_for_userid($user->id);
+        $approved = new approved_contextlist($user, 'tool_guardianlink', $contextlist->get_contextids());
+        provider::export_user_data($approved);
     }
 
     /**
