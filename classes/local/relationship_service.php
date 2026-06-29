@@ -1405,6 +1405,9 @@ class relationship_service {
     public static function get_proxy_recipients(int $learnerid, int $courseid): array {
         global $DB;
         $now = time();
+        // Shared scope eligibility (active scope time window + course/learner/site/category coverage),
+        // so proxy and bulk messaging apply identical rules that match can_access_child().
+        [$scopesql, $scopeparams] = self::messaging_scope_sql($courseid, 'pmsc');
         $sql = "SELECT r.id AS relationshipid, r.guardianid, r.childid, r.reltype, r.confidentiality,
                        u.id, u.firstname, u.lastname, u.email, u.mailformat, u.deleted, u.suspended
                   FROM {tool_guardianlink_rel} r
@@ -1416,21 +1419,49 @@ class relationship_service {
                    AND s.status = :sstatus
                    AND s.allowteachercontact = 1
                    AND s.allowmessaging = 1
-                   AND (s.courseid = :courseid OR s.scopekind IN ('learner', 'site'))
                    AND (r.starttime = 0 OR r.starttime <= :now1)
                    AND (r.endtime = 0 OR r.endtime >= :now2)
                    AND u.deleted = 0
                    AND u.suspended = 0
+                   {$scopesql}
               ORDER BY r.legal DESC, r.reltype ASC";
         return $DB->get_records_sql($sql, [
             'learnerid' => $learnerid,
             'rstatus' => self::STATUS_ACTIVE,
-            'verified' => 'verified',
+            'verified' => self::AUTHORITY_VERIFIED,
             'sstatus' => self::STATUS_ACTIVE,
-            'courseid' => $courseid,
             'now1' => $now,
             'now2' => $now,
-        ]);
+        ] + $scopeparams);
+    }
+
+    /**
+     * Build the scope-eligibility SQL fragment shared by proxy and bulk messaging recipient queries.
+     *
+     * Constrains a {tool_guardianlink_scope} alias `s` to an active, in-date scope that covers the
+     * target course directly, is learner/site-wide, or covers the course's category — matching the
+     * coverage and time-window rules enforced by can_access_child(). Centralising this guarantees the
+     * two recipient resolvers cannot drift apart (e.g. one honouring scope expiry and the other not).
+     *
+     * @param int $courseid Target course id, or 0 for no course constraint (audience-wide scopes).
+     * @param string $prefix Unique named-parameter prefix.
+     * @return array [string $sqlfragment, array $params]
+     */
+    public static function messaging_scope_sql(int $courseid, string $prefix = 'msc'): array {
+        global $DB;
+        $now = time();
+        $sql = " AND (s.starttime = 0 OR s.starttime <= :{$prefix}snow1)"
+             . " AND (s.endtime = 0 OR s.endtime >= :{$prefix}snow2)";
+        $params = ["{$prefix}snow1" => $now, "{$prefix}snow2" => $now];
+        if ($courseid > 0) {
+            $categoryid = (int)$DB->get_field('course', 'category', ['id' => $courseid]);
+            $sql .= " AND (s.courseid = :{$prefix}cid"
+                  . " OR s.scopekind IN ('learner', 'site')"
+                  . " OR (s.scopekind = 'category' AND s.categoryid = :{$prefix}cat))";
+            $params["{$prefix}cid"] = $courseid;
+            $params["{$prefix}cat"] = $categoryid > 0 ? $categoryid : -1;
+        }
+        return [$sql, $params];
     }
 
 

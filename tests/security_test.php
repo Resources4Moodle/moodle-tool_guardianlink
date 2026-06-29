@@ -26,12 +26,14 @@ namespace tool_guardianlink;
 
 use tool_guardianlink\local\relationship_service as rs;
 use tool_guardianlink\local\message_service as ms;
+use tool_guardianlink\local\bulk_message_service as bms;
 
 /**
  * Tests for restriction handling, scope expiry, replace-safe sync, health visibility and thread locking.
  *
  * @covers \tool_guardianlink\local\relationship_service
  * @covers \tool_guardianlink\local\message_service
+ * @covers \tool_guardianlink\local\bulk_message_service
  */
 final class security_test extends \advanced_testcase {
     /**
@@ -285,6 +287,84 @@ final class security_test extends \advanced_testcase {
         rs::set_restricted($relid, true, 'Safeguarding hold', 2);
         $due = rs::get_due_digest_preferences();
         $this->assertNotContains((int)$adult->id, array_map(fn($d) => (int)$d->guardianid, $due));
+    }
+
+    /**
+     * Proxy recipients honour the SCOPE time window: an expired messaging scope receives nothing (#3).
+     */
+    public function test_proxy_recipients_honour_scope_expiry(): void {
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course();
+        $adult = $gen->create_user();
+        $learner = $gen->create_user();
+        $gen->enrol_user($learner->id, $course->id);
+        rs::ensure_default_profiles();
+        $relid = rs::add_or_update_relationship(['adultid' => $adult->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'authoritystatus' => 'verified',
+            'accessprofile' => 'family_full'], 2);
+
+        // Active messaging scope: adult is a recipient.
+        rs::set_scopes($relid, [['scopekind' => 'course', 'courseid' => $course->id,
+            'allowteachercontact' => 1, 'allowmessaging' => 1]], 2, 'family_full');
+        $ids = array_map(fn($r) => (int)$r->guardianid, rs::get_proxy_recipients($learner->id, $course->id));
+        $this->assertContains((int)$adult->id, $ids);
+
+        // Expire the scope: the adult must drop out (previously only the relationship window was checked).
+        rs::set_scopes($relid, [['scopekind' => 'course', 'courseid' => $course->id,
+            'allowteachercontact' => 1, 'allowmessaging' => 1, 'endtime' => time() - 3600]], 2, 'family_full', '', true);
+        $ids = array_map(fn($r) => (int)$r->guardianid, rs::get_proxy_recipients($learner->id, $course->id));
+        $this->assertNotContains((int)$adult->id, $ids);
+    }
+
+    /**
+     * Proxy recipients include a valid category-scoped adult for a course in that category (#3).
+     */
+    public function test_proxy_recipients_include_category_scope(): void {
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $category = $gen->create_category();
+        $course = $gen->create_course(['category' => $category->id]);
+        $adult = $gen->create_user();
+        $learner = $gen->create_user();
+        $gen->enrol_user($learner->id, $course->id);
+        rs::ensure_default_profiles();
+        $relid = rs::add_or_update_relationship(['adultid' => $adult->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'authoritystatus' => 'verified',
+            'accessprofile' => 'family_full'], 2);
+        rs::set_scopes($relid, [['scopekind' => 'category', 'categoryid' => $category->id,
+            'allowteachercontact' => 1, 'allowmessaging' => 1]], 2, 'family_full');
+
+        $ids = array_map(fn($r) => (int)$r->guardianid, rs::get_proxy_recipients($learner->id, $course->id));
+        $this->assertContains((int)$adult->id, $ids, 'category-scoped adult must be a valid recipient');
+    }
+
+    /**
+     * Bulk messaging always excludes restricted relationships, even when "verified only" is off (#4).
+     */
+    public function test_bulk_recipients_exclude_restricted_even_without_verifiedonly(): void {
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course();
+        $adult = $gen->create_user();
+        $learner = $gen->create_user();
+        $gen->enrol_user($learner->id, $course->id);
+        rs::ensure_default_profiles();
+        $relid = rs::add_or_update_relationship(['adultid' => $adult->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'authoritystatus' => 'verified',
+            'accessprofile' => 'family_full', 'courseids' => (string)$course->id], 2);
+        rs::set_scopes($relid, [['scopekind' => 'course', 'courseid' => $course->id,
+            'allowteachercontact' => 1, 'allowmessaging' => 1]], 2, 'family_full');
+
+        // Deliberately disable the verified-only filter; eligibility must still require verified.
+        $criteria = bms::normalise_criteria(['audiencetype' => 'course', 'courseid' => $course->id,
+            'verifiedonly' => 0, 'excluderestricted' => 0]);
+        $ids = array_map(fn($r) => (int)$r->id, bms::resolve_recipients($criteria));
+        $this->assertContains((int)$adult->id, $ids);
+
+        rs::set_restricted($relid, true, 'Safeguarding hold', 2);
+        $ids = array_map(fn($r) => (int)$r->id, bms::resolve_recipients($criteria));
+        $this->assertNotContains((int)$adult->id, $ids, 'restricted adult must never receive bulk messages');
     }
 
     /**

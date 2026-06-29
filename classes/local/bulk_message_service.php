@@ -134,21 +134,23 @@ class bulk_message_service {
         }
         $now = time();
         [$insql, $params] = $DB->get_in_or_equal($learnerids, SQL_PARAMS_NAMED, 'lid');
-        $coursejoin = '';
-        if (in_array($criteria['audiencetype'], ['course', 'overdue'], true) && $criteria['courseid'] > 0) {
-            // For a single course (or overdue) audience, the scope must cover that course (or be learner/site wide).
-            $coursejoin = " AND (s.courseid = :courseid OR s.scopekind IN ('learner', 'site'))";
-            $params['courseid'] = $criteria['courseid'];
-        }
+        // Shared scope eligibility (active scope time window + course/learner/site/category coverage),
+        // identical to proxy messaging. For broad audiences (category/cohort/site) there is no single
+        // course, so only the scope time window applies.
+        $coursetarget = (in_array($criteria['audiencetype'], ['course', 'overdue'], true) && $criteria['courseid'] > 0)
+            ? (int)$criteria['courseid']
+            : 0;
+        [$coursejoin, $scopeparams] = relationship_service::messaging_scope_sql($coursetarget, 'bmsc');
+        $params += $scopeparams;
         $where = '';
         if ($criteria['legalonly']) {
             $where .= ' AND r.legal = 1';
         }
-        if ($criteria['verifiedonly']) {
-            $where .= " AND r.authoritystatus = 'verified'";
-        } else {
-            $where .= " AND r.authoritystatus <> 'revoked' AND r.authoritystatus <> 'disputed'";
-        }
+        // Recipient eligibility always requires a VERIFIED relationship — never message an adult whose
+        // authority is revoked, restricted, disputed or unverified. This mirrors the access invariant
+        // and is independent of the optional confidentiality-tier (excluderestricted) filter below.
+        $where .= " AND r.authoritystatus = :verified";
+        $params['verified'] = relationship_service::AUTHORITY_VERIFIED;
         if ($criteria['excluderestricted']) {
             [$cinsql, $cparams] = $DB->get_in_or_equal(self::RESTRICTED_TIERS, SQL_PARAMS_NAMED, 'ctier', false);
             $where .= " AND r.confidentiality $cinsql";
