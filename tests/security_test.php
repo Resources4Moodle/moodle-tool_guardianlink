@@ -28,6 +28,7 @@ use tool_guardianlink\local\relationship_service as rs;
 use tool_guardianlink\local\message_service as ms;
 use tool_guardianlink\local\bulk_message_service as bms;
 use tool_guardianlink\local\progress_service as ps;
+use tool_guardianlink\local\setup;
 
 /**
  * Tests for restriction handling, scope expiry, replace-safe sync, health visibility and thread locking.
@@ -366,6 +367,43 @@ final class security_test extends \advanced_testcase {
         rs::set_restricted($relid, true, 'Safeguarding hold', 2);
         $ids = array_map(fn($r) => (int)$r->id, bms::resolve_recipients($criteria));
         $this->assertNotContains((int)$adult->id, $ids, 'restricted adult must never receive bulk messages');
+    }
+
+    /**
+     * The optional auto-assigned role is stripped immediately on restriction and on expiry (#11).
+     */
+    public function test_status_downgrade_strips_auto_assigned_role(): void {
+        global $DB;
+        $this->resetAfterTest();
+        set_config('autoassignrole', 1, 'tool_guardianlink');
+        setup::ensure_guardian_role();
+        $roleid = setup::guardian_role_id();
+        $this->assertGreaterThan(0, $roleid);
+        $gen = $this->getDataGenerator();
+        $adult = $gen->create_user();
+        $learner = $gen->create_user();
+        rs::ensure_default_profiles();
+        $usercontext = \context_user::instance($learner->id);
+
+        $haskey = ['roleid' => $roleid, 'userid' => $adult->id, 'contextid' => $usercontext->id,
+            'component' => 'tool_guardianlink'];
+
+        // An active, verified grant assigns the role at the learner's user context.
+        $relid = rs::add_or_update_relationship(['adultid' => $adult->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'authoritystatus' => 'verified',
+            'accessprofile' => 'family_full'], 2);
+        $this->assertTrue($DB->record_exists('role_assignments', $haskey));
+
+        // Restriction must strip it immediately (not wait for a cleanup task).
+        rs::set_restricted($relid, true, 'Safeguarding hold', 2);
+        $this->assertFalse($DB->record_exists('role_assignments', $haskey));
+
+        // Re-instate, then let it expire: the role must be stripped by the expiry run.
+        rs::set_restricted($relid, false, 'Cleared', 2);
+        $this->assertTrue($DB->record_exists('role_assignments', $haskey));
+        $DB->set_field('tool_guardianlink_rel', 'endtime', time() - 3600, ['id' => $relid]);
+        rs::expire_due_grants();
+        $this->assertFalse($DB->record_exists('role_assignments', $haskey));
     }
 
     /**

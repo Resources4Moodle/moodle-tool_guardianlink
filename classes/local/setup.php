@@ -245,6 +245,22 @@ class setup {
     }
 
     /**
+     * Immediately strip every standing role grant for an adult whose access to a learner has ended
+     * (revoked, restricted, disputed or expired).
+     *
+     * Removes BOTH the optional auto-assigned user-context role for this learner AND any standing
+     * assisted course-view grants. This runs synchronously at the moment of the status change; the
+     * scheduled assist-cleanup task is only a backstop, never the primary enforcement.
+     *
+     * @param int $adultid
+     * @param int $learnerid
+     */
+    public static function strip_all_grants(int $adultid, int $learnerid): void {
+        self::maybe_sync_role($adultid, $learnerid, false);
+        self::revoke_all_course_views($adultid);
+    }
+
+    /**
      * Heartbeat: refresh the timestamp of a live assisted session's course grant so the cleanup
      * sweep does not revoke it while the session is active. Called on every request of an assisted
      * session; once the session ends (logout or browser-close) the heartbeat stops and the grant

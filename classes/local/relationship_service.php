@@ -695,8 +695,14 @@ class relationship_service {
                 }
             }
         }
-        // Optional role provisioning (login-as prohibited role) follows the grant's active state.
-        setup::maybe_sync_role($adultid, $learnerid, $status === self::STATUS_ACTIVE);
+        // Role provisioning follows the grant's LIVE state. A grant only conveys access when it is
+        // active AND verified; for any other state (revoked, restricted, disputed, expired, pending,
+        // unverified) strip all standing role grants immediately rather than waiting for cleanup.
+        if ($status === self::STATUS_ACTIVE && $record->authoritystatus === self::AUTHORITY_VERIFIED) {
+            setup::maybe_sync_role($adultid, $learnerid, true);
+        } else {
+            setup::strip_all_grants($adultid, $learnerid);
+        }
         return $relationshipid;
     }
 
@@ -1683,7 +1689,7 @@ class relationship_service {
         $relationship->timemodified = time();
         $relationship->notes = trim((string)$relationship->notes . "\n" . clean_param($reason, PARAM_TEXT));
         $DB->update_record('tool_guardianlink_rel', $relationship);
-        setup::maybe_sync_role((int)$relationship->guardianid, (int)$relationship->childid, false);
+        setup::strip_all_grants((int)$relationship->guardianid, (int)$relationship->childid);
         self::trigger_event(
             'relationship_revoked',
             \context_user::instance((int)$relationship->childid),
@@ -1713,6 +1719,15 @@ class relationship_service {
     public static function expire_due_grants(): int {
         global $DB;
         $now = time();
+        // Capture the relationships about to expire so their standing grants can be stripped
+        // immediately (rather than waiting for the assist-cleanup backstop).
+        $expiring = $DB->get_records_select(
+            'tool_guardianlink_rel',
+            'status = :active AND endtime > 0 AND endtime < :now',
+            ['active' => self::STATUS_ACTIVE, 'now' => $now],
+            '',
+            'id, guardianid, childid'
+        );
         $DB->execute("UPDATE {tool_guardianlink_rel} SET status = :expired, timemodified = :now1 "
             . "WHERE status = :active AND endtime > 0 AND endtime < :now2", [
             'expired' => self::STATUS_EXPIRED,
@@ -1727,6 +1742,9 @@ class relationship_service {
             'active' => self::STATUS_ACTIVE,
             'now2' => $now,
         ]);
+        foreach ($expiring as $rel) {
+            setup::strip_all_grants((int)$rel->guardianid, (int)$rel->childid);
+        }
         return (int)$DB->count_records('tool_guardianlink_rel', ['status' => self::STATUS_EXPIRED]);
     }
 
@@ -2215,9 +2233,13 @@ class relationship_service {
         $note = ($restrict ? '[RESTRICTED] ' : '[UNRESTRICTED] ') . userdate(time()) . ': ' . clean_param($reason, PARAM_TEXT);
         $rel->notes = trim((string)$rel->notes . "\n" . $note);
         $DB->update_record('tool_guardianlink_rel', $rel);
-        // Strip every standing course-context grant so a restricted adult cannot assist or inspect.
+        // Strip every standing grant (auto-assigned role AND assisted course-views) immediately so a
+        // restricted adult cannot assist or inspect; cleanup tasks are only a backstop. When the
+        // restriction is lifted, restore the optional auto-role if the relationship is otherwise active.
         if ($restrict) {
-            setup::revoke_all_course_views((int)$rel->guardianid);
+            setup::strip_all_grants((int)$rel->guardianid, (int)$rel->childid);
+        } else {
+            setup::maybe_sync_role((int)$rel->guardianid, (int)$rel->childid, $rel->status === self::STATUS_ACTIVE);
         }
         self::log_access(
             $userid,
