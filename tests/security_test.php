@@ -370,6 +370,36 @@ final class security_test extends \advanced_testcase {
     }
 
     /**
+     * An invalid scope payload aborts the whole relationship upsert — no partial state (#10).
+     */
+    public function test_invalid_scope_kind_rolls_back_upsert(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $this->preventResetByRollback();
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course();
+        $adult = $gen->create_user();
+        $learner = $gen->create_user();
+        rs::ensure_default_profiles();
+        $before = $DB->count_records('tool_guardianlink_rel');
+
+        try {
+            rs::add_or_update_relationship([
+                'adultid' => $adult->id, 'learnerid' => $learner->id, 'reltype' => 'legal_parent',
+                'status' => 'active', 'authoritystatus' => 'verified', 'accessprofile' => 'family_full',
+                'scopes' => [['scopekind' => 'bogus', 'courseid' => $course->id]],
+            ], 2);
+            $this->fail('Expected invalid_parameter_exception for an unknown scope kind');
+        } catch (\invalid_parameter_exception $e) {
+            $this->assertStringContainsString('scope kind', $e->getMessage());
+        }
+
+        // The relationship row inserted before set_scopes() threw must have been rolled back.
+        $this->assertSame($before, $DB->count_records('tool_guardianlink_rel'));
+        $this->assertSame(0, $DB->count_records('tool_guardianlink_scope', ['courseid' => $course->id]));
+    }
+
+    /**
      * The optional auto-assigned role is stripped immediately on restriction and on expiry (#11).
      */
     public function test_status_downgrade_strips_auto_assigned_role(): void {

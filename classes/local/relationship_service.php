@@ -633,14 +633,7 @@ class relationship_service {
             'timemodified' => $now,
         ];
 
-        if ($existing) {
-            $record->id = (int)$existing->id;
-            $DB->update_record('tool_guardianlink_rel', $record);
-            $relationshipid = (int)$record->id;
-        } else {
-            $relationshipid = (int)$DB->insert_record('tool_guardianlink_rel', $record);
-        }
-
+        $isnew = empty($existing);
         $profile = clean_param((string)self::value(
             $data,
             'accessprofile',
@@ -651,35 +644,67 @@ class relationship_service {
         // the caller explicitly opts in with 'replacescopes'. This keeps additive behaviour for the
         // course-scoped registry, which must not touch other courses' scopes.
         $replacescopes = (bool)self::value($data, 'replacescopes', $fromapi);
-        if (self::value($data, 'scopes', null) !== null) {
-            self::set_scopes(
-                $relationshipid,
-                (array)self::value($data, 'scopes', []),
+
+        // Atomic write: the relationship row, its scopes, the external-identity map, the review-time
+        // schedule and the audit entry commit together or not at all. An invalid scope payload
+        // (rejected by set_scopes' validation) therefore rolls the whole upsert back, never leaving a
+        // relationship persisted with partial or unvalidated scope state.
+        $transaction = $DB->start_delegated_transaction();
+        try {
+            if ($existing) {
+                $record->id = (int)$existing->id;
+                $DB->update_record('tool_guardianlink_rel', $record);
+                $relationshipid = (int)$record->id;
+            } else {
+                $relationshipid = (int)$DB->insert_record('tool_guardianlink_rel', $record);
+            }
+
+            if (self::value($data, 'scopes', null) !== null) {
+                self::set_scopes(
+                    $relationshipid,
+                    (array)self::value($data, 'scopes', []),
+                    $createdby,
+                    $profile,
+                    $sourcecode,
+                    $replacescopes
+                );
+            } else {
+                self::set_scopes_from_csv($relationshipid, $data, $createdby, $profile, $sourcecode, $replacescopes);
+            }
+
+            if ($sourcecode !== '' && $externalid !== '') {
+                self::upsert_external_map('relationship', $sourcecode, $externalid, ['relationshipid' => $relationshipid]);
+            }
+
+            // Schedule the first re-validation review if none was supplied and the cycle is enabled.
+            if ($isnew && (int)$record->reviewtime === 0 && $status === self::STATUS_ACTIVE) {
+                $next = self::next_review_time();
+                if ($next > 0) {
+                    $DB->set_field('tool_guardianlink_rel', 'reviewtime', $next, ['id' => $relationshipid]);
+                }
+            }
+
+            self::log_access(
                 $createdby,
-                $profile,
-                $sourcecode,
-                $replacescopes
+                $learnerid,
+                $isnew ? 'relationship_created' : 'relationship_updated',
+                0,
+                'relationship',
+                $relationshipid,
+                ['sourcecode' => $sourcecode],
+                'success',
+                $sourcecode
             );
-        } else {
-            self::set_scopes_from_csv($relationshipid, $data, $createdby, $profile, $sourcecode, $replacescopes);
+
+            $transaction->allow_commit();
+        } catch (\Exception $e) {
+            // The rollback() call re-throws $e after discarding the partial writes.
+            $transaction->rollback($e);
         }
 
-        if ($sourcecode !== '' && $externalid !== '') {
-            self::upsert_external_map('relationship', $sourcecode, $externalid, ['relationshipid' => $relationshipid]);
-        }
-
-        self::log_access(
-            $createdby,
-            $learnerid,
-            $existing ? 'relationship_updated' : 'relationship_created',
-            0,
-            'relationship',
-            $relationshipid,
-            ['sourcecode' => $sourcecode],
-            'success',
-            $sourcecode
-        );
-        if (!$existing) {
+        // Post-commit side effects (Moodle events and role assignments must not run on a rolled-back
+        // write, so they live outside the transaction).
+        if ($isnew) {
             self::trigger_event(
                 'relationship_created',
                 \context_user::instance($learnerid),
@@ -687,13 +712,6 @@ class relationship_service {
                 $relationshipid,
                 ['reltype' => $reltype]
             );
-            // Schedule the first re-validation review if none was supplied and the cycle is enabled.
-            if ((int)$record->reviewtime === 0 && $status === self::STATUS_ACTIVE) {
-                $next = self::next_review_time();
-                if ($next > 0) {
-                    $DB->set_field('tool_guardianlink_rel', 'reviewtime', $next, ['id' => $relationshipid]);
-                }
-            }
         }
         // Role provisioning follows the grant's LIVE state. A grant only conveys access when it is
         // active AND verified; for any other state (revoked, restricted, disputed, expired, pending,
@@ -811,6 +829,20 @@ class relationship_service {
         global $DB;
         $profiledefaults = self::access_profiles()[$profile] ?? self::access_profiles()['family_basic'];
         $now = time();
+        // Validate the ENTIRE incoming set before writing anything: scopekind must be one of the known
+        // kinds. Combined with the delegated transaction in add_or_update_relationship(), an invalid
+        // scope payload aborts the whole upsert rather than leaving partially-written scope state.
+        $validkinds = ['course', 'category', 'learner', 'site'];
+        foreach ($scopes as $scope) {
+            $s = is_array($scope) ? $scope : (array)$scope;
+            $kind = clean_param(
+                (string)($s['scopekind'] ?? ((int)($s['categoryid'] ?? 0) > 0 ? 'category' : 'course')),
+                PARAM_ALPHANUMEXT
+            );
+            if (!in_array($kind, $validkinds, true)) {
+                throw new \invalid_parameter_exception('Invalid GuardianLink scope kind: ' . $kind);
+            }
+        }
         // In replace mode we record which scope identities the incoming set covers, then revoke any
         // previously-active scope that is missing — so narrowing a parent from five courses to one
         // (e.g. from an ERP/SIS sync) actually removes the other four.
