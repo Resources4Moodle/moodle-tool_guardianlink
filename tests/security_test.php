@@ -27,6 +27,7 @@ namespace tool_guardianlink;
 use tool_guardianlink\local\relationship_service as rs;
 use tool_guardianlink\local\message_service as ms;
 use tool_guardianlink\local\bulk_message_service as bms;
+use tool_guardianlink\local\progress_service as ps;
 
 /**
  * Tests for restriction handling, scope expiry, replace-safe sync, health visibility and thread locking.
@@ -365,6 +366,27 @@ final class security_test extends \advanced_testcase {
         rs::set_restricted($relid, true, 'Safeguarding hold', 2);
         $ids = array_map(fn($r) => (int)$r->id, bms::resolve_recipients($criteria));
         $this->assertNotContains((int)$adult->id, $ids, 'restricted adult must never receive bulk messages');
+    }
+
+    /**
+     * A grade item from another course must not resolve when rendering for a given course (#6).
+     */
+    public function test_activity_grade_by_item_is_course_bound(): void {
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $coursea = $gen->create_course();
+        $courseb = $gen->create_course();
+        $learner = $gen->create_user();
+        $assignb = $gen->create_module('assign', ['course' => $courseb->id]);
+        $itemb = \grade_item::fetch([
+            'itemtype' => 'mod', 'itemmodule' => 'assign',
+            'iteminstance' => $assignb->id, 'courseid' => $courseb->id,
+        ]);
+        $this->assertNotEmpty($itemb);
+
+        // Rendering for course B (the item's own course) resolves; rendering for course A must not.
+        $this->assertNotNull(ps::activity_grade_by_item((int)$itemb->id, (int)$learner->id, (int)$courseb->id));
+        $this->assertNull(ps::activity_grade_by_item((int)$itemb->id, (int)$learner->id, (int)$coursea->id));
     }
 
     /**

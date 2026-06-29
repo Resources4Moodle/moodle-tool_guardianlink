@@ -322,7 +322,7 @@ class template_service {
                 }
                 // A specific test/activity, when the caller nominated one (gradeitemid in $extra).
                 if (!empty($extra['gradeitemid'])) {
-                    $one = progress_service::activity_grade_by_item((int)$extra['gradeitemid'], $learnerid);
+                    $one = progress_service::activity_grade_by_item((int)$extra['gradeitemid'], $learnerid, $courseid);
                     if ($one !== null) {
                         $ctx['testname'] = $one['name'];
                         $ctx['testresult'] = $one['grade'];

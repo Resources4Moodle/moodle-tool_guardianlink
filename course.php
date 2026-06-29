@@ -42,6 +42,9 @@ $canproxy = has_capability('tool/guardianlink:sendproxymessages', $context);
 $canmanage = has_capability('moodle/course:update', $context);
 // Family metadata (names of a learner's authorised adults) is teacher-prevented by default.
 $canseefamily = has_capability('tool/guardianlink:viewfamilymetadata', $context);
+// Gradebook visibility is a SEPARATE permission: a user able to message adults is not necessarily
+// allowed to see learners' grades, so gate grade columns on Moodle's own grade capability.
+$canviewgrades = has_capability('moodle/grade:viewall', $context);
 
 if (!$canproxy && !$canmanage) {
     throw new moodle_exception('accessdenied', 'tool_guardianlink');
@@ -121,7 +124,7 @@ $withadultscount = 0;
 foreach ($enrolled as $learner) {
     $recipients = $canproxy ? relationship_service::get_proxy_recipients((int)$learner->id, $courseid) : [];
     $nadults = count($recipients);
-    $p = progress_service::course_progress($courseid, (int)$learner->id, true);
+    $p = progress_service::course_progress($courseid, (int)$learner->id, $canviewgrades);
     $isatrisk = $p->overdue > 0;
     if ($nadults > 0) {
         $withadultscount++;

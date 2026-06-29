@@ -194,13 +194,19 @@ class progress_service {
      *
      * @param int $itemid grade_items.id
      * @param int $learnerid
-     * @return array|null ['name' => string, 'grade' => string] or null if no grade
+     * @param int $courseid When > 0, the grade item must belong to this course or null is returned.
+     * @return array|null ['name' => string, 'grade' => string] or null if no grade / wrong course
      */
-    public static function activity_grade_by_item(int $itemid, int $learnerid): ?array {
+    public static function activity_grade_by_item(int $itemid, int $learnerid, int $courseid = 0): ?array {
         global $CFG;
         require_once($CFG->libdir . '/gradelib.php');
         $item = \grade_item::fetch(['id' => $itemid]);
         if (!$item) {
+            return null;
+        }
+        // A posted/forwarded grade-item id must belong to the course being rendered. Without this,
+        // a tampered gradeitemid could surface a grade from an unrelated course in {testresult}.
+        if ($courseid > 0 && (int)$item->courseid !== $courseid) {
             return null;
         }
         $grade = new \grade_grade(['itemid' => $item->id, 'userid' => $learnerid], true);
