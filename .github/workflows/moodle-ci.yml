@@ -63,7 +63,8 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: ${{ matrix.extensions }}
+          # Explicit extension list (the matrix does not define `extensions`); covers both DB drivers.
+          extensions: intl, zip, gd, soap, exif, pdo, pdo_pgsql, pgsql, mysqli, mbstring, xml, curl, sodium
           ini-values: max_input_vars=5000
           coverage: none
 
@@ -81,33 +82,36 @@ jobs:
           DB: ${{ matrix.database }}
           MOODLE_BRANCH: ${{ matrix.moodle-branch }}
 
+      # Quality steps run sequentially and stop the job at the first real failure, so the original
+      # cause is obvious rather than buried under noisy secondary failures from a broken install.
       - name: phplint
-        if: ${{ always() }}
         run: moodle-plugin-ci phplint
       - name: phpmd
-        if: ${{ always() }}
         run: moodle-plugin-ci phpmd
       - name: phpcs
-        if: ${{ always() }}
         run: moodle-plugin-ci phpcs --max-warnings 0
       - name: phpdoc
-        if: ${{ always() }}
         run: moodle-plugin-ci phpdoc --max-warnings 0
       - name: validate
-        if: ${{ always() }}
         run: moodle-plugin-ci validate
       - name: savepoints
-        if: ${{ always() }}
         run: moodle-plugin-ci savepoints
       - name: mustache
-        if: ${{ always() }}
         run: moodle-plugin-ci mustache
       - name: grunt
-        if: ${{ always() }}
         run: moodle-plugin-ci grunt
       - name: phpunit
-        if: ${{ always() }}
         run: moodle-plugin-ci phpunit --fail-on-warning
       - name: behat
-        if: ${{ always() }}
         run: moodle-plugin-ci behat --profile chrome
+
+      # Collect logs/dumps only when something failed, to help diagnose without hiding the first cause.
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-${{ matrix.database }}-php${{ matrix.php }}
+          path: |
+            moodledata/behat_dump/**
+            moodle/behat_dump/**
+          if-no-files-found: ignore

@@ -45,6 +45,10 @@ $canseefamily = has_capability('tool/guardianlink:viewfamilymetadata', $context)
 // Gradebook visibility is a SEPARATE permission: a user able to message adults is not necessarily
 // allowed to see learners' grades, so gate grade columns on Moodle's own grade capability.
 $canviewgrades = has_capability('moodle/grade:viewall', $context);
+// Audit-level visibility: who may see ALL course threads and adult/relationship identities, beyond
+// the minimum a teacher needs to do their own job.
+$canviewaudit = has_capability('tool/guardianlink:viewaudit', $context);
+$canseeadultnames = $canseefamily || $canviewaudit || $canmanage;
 
 if (!$canproxy && !$canmanage) {
     throw new moodle_exception('accessdenied', 'tool_guardianlink');
@@ -165,7 +169,7 @@ echo html_writer::end_div();
 $canregistry = has_capability('tool/guardianlink:managecourseregistry', $context);
 if ($canproxy || $canregistry) {
     $actions = [];
-    if ($canproxy && $withadultscount > 0) {
+    if ($canproxy && $withadultscount > 0 && relationship_service::course_allows_teacher_proxy($courseid)) {
         $actions[] = html_writer::link(
             new moodle_url('/admin/tool/guardianlink/coursebulk.php', ['courseid' => $courseid]),
             get_string('bulkmessageguardians', 'tool_guardianlink'),
@@ -269,7 +273,13 @@ if (!empty($table->data)) {
 
 // Open teacher<->adult message threads for this course (metadata only) with reply links.
 if ($canproxy) {
-    $threads = $DB->get_records('tool_guardianlink_msgthread', ['courseid' => $courseid], 'timemodified DESC', '*', 0, 50);
+    // Ordinary teachers see only their OWN threads; thread subjects/status created by other teachers
+    // require the audit capability (avoids leaking that a relationship/conversation exists).
+    $threadconds = ['courseid' => $courseid];
+    if (!$canviewaudit) {
+        $threadconds['teacherid'] = (int)$USER->id;
+    }
+    $threads = $DB->get_records('tool_guardianlink_msgthread', $threadconds, 'timemodified DESC', '*', 0, 50);
     if ($threads) {
         echo $OUTPUT->heading(get_string('coursemessagethreads', 'tool_guardianlink'), 3);
         $tt = new html_table();
@@ -302,10 +312,17 @@ if ($canproxy && \tool_guardianlink\local\supervision_service::course_allows_ind
             get_string('status', 'tool_guardianlink'), get_string('lastupdated', 'tool_guardianlink')];
         foreach ($acks as $ack) {
             $learner = core_user::get_user((int)$ack->childid, '*', IGNORE_MISSING);
-            $adult = core_user::get_user((int)$ack->guardianid, '*', IGNORE_MISSING);
+            // The authorised adult's identity is relationship metadata: redact it for ordinary teachers
+            // (who only need the operational status), reveal it only with family-metadata/audit/manage.
+            if ($canseeadultnames) {
+                $adult = core_user::get_user((int)$ack->guardianid, '*', IGNORE_MISSING);
+                $adultcell = $adult ? fullname($adult) : (int)$ack->guardianid;
+            } else {
+                $adultcell = get_string('metadatahidden', 'tool_guardianlink');
+            }
             $at->data[] = [
                 $learner ? fullname($learner) : (int)$ack->childid,
-                $adult ? fullname($adult) : (int)$ack->guardianid,
+                $adultcell,
                 $ack->status === 'allowed'
                     ? html_writer::tag('span', s($ack->status), ['class' => 'badge badge-success'])
                     : s($ack->status),

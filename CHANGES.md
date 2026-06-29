@@ -2,6 +2,38 @@
 
 All notable changes to this plugin are documented here.
 
+## v1.0.0-rc3 (2026) — 2026063019
+
+Third release candidate. Closes the gate-enforcement, classroom-connection, help-system and CI
+findings of a follow-up audit.
+
+- **Course policy enforced everywhere (GATE-01):** `course_allows_teacher_proxy()` is enforced in
+  the teacher/send pages AND in the message services (`send_proxy_message`, `send_proxy_template`,
+  `send_template_to_adults`, `send_one_off`), so a course that disables teacher proxy messaging
+  cannot be bypassed by any caller.
+- **Grade preview gated (GATE-02):** grade item options and grade tokens are only offered to a
+  sender who holds `moodle/grade:viewall`; the service template sends take an explicit
+  sender-can-view-grades flag that defaults to false (fail closed).
+- **`send_one_off()` fails closed (GATE-03):** it now requires a live messaging scope for the
+  learner/course and respects the course proxy policy.
+- **Bulk audience intersection (GATE-04):** category sends require the adult's scope to intersect the
+  target category; cohort sends require a learner/site scope (a cohort is not a teaching context).
+- **Metadata visibility (GATE-05/06):** the course dashboard shows ordinary teachers only their own
+  message threads, and hides authorised-adult identities in acknowledgement tables unless the viewer
+  holds family-metadata/audit/manage capability.
+- **Classroom connection (GATE-07):** `visible_courses_for_adult()` expands category, learner and
+  site scopes into concrete course cards on the adult dashboard, with a plain-language reason for
+  access on every row.
+- **Proposal policy (GATE-09):** tutor-request course scopes honour `allowparentpropose`.
+- **Help system + inclusive language:** the in-product help now serves authorised adults and higher
+  education explicitly (new "Words we use", "For authorised adults" and "Higher education" sections),
+  and user-facing labels move to inclusive wording (authorised adult, learner, student-authorised
+  supporter, share results with authorised adults).
+- **CI hardening:** the workflow defines an explicit PHP extension list (was an undefined matrix
+  variable), runs quality steps fail-fast instead of `if: always()`, and uploads failure artifacts.
+
+Verified before release: PHPUnit 52/52 and Behat 4/4 green on the Moodle 5.2 test instances.
+
 ## v1.0.0-rc2 (2026) — 2026063018
 
 Second release candidate. Resolves the findings of an in-depth security review (two Critical and

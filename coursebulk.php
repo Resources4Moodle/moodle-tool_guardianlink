@@ -39,6 +39,12 @@ $course = get_course($courseid);
 require_login($course);
 $context = context_course::instance($courseid);
 require_capability('tool/guardianlink:sendproxymessages', $context);
+// Course policy: respect a course that has disabled teacher proxy messaging.
+if (!relationship_service::course_allows_teacher_proxy($courseid)) {
+    throw new moodle_exception('teacherproxydisabled', 'tool_guardianlink');
+}
+// Gradebook visibility is a separate Moodle permission from messaging.
+$canviewgrades = has_capability('moodle/grade:viewall', $context);
 
 $baseurl = new moodle_url('/admin/tool/guardianlink/coursebulk.php', ['courseid' => $courseid]);
 $PAGE->set_context($context);
@@ -52,7 +58,7 @@ $templates = [];
 foreach (template_service::get_course_templates($courseid, true, '', true) as $t) {
     $templates[$t->id] = $t;
 }
-$gradeitems = progress_service::gradeitem_options($courseid);
+$gradeitems = $canviewgrades ? progress_service::gradeitem_options($courseid) : [];
 
 // Resolve the audience to learner ids that actually have reachable adults.
 $learnerids = [];
@@ -82,14 +88,21 @@ if (empty($templates)) {
     exit;
 }
 
-$extra = $gradeitemid ? ['gradeitemid' => $gradeitemid] : [];
+$extra = ($canviewgrades && $gradeitemid) ? ['gradeitemid' => $gradeitemid] : [];
 
 // Send.
 if ($dosend && $templateid && isset($templates[$templateid]) && confirm_sesskey()) {
     $sent = 0;
     $recipients = 0;
     foreach ($learnerids as $lid) {
-        $r = message_service::send_proxy_template((int)$USER->id, $lid, $courseid, $templates[$templateid], $extra);
+        $r = message_service::send_proxy_template(
+            (int)$USER->id,
+            $lid,
+            $courseid,
+            $templates[$templateid],
+            $extra,
+            $canviewgrades
+        );
         $sent += $r['sent'];
         $recipients += $r['recipients'];
     }

@@ -41,6 +41,12 @@ $child = core_user::get_user($childid, '*', MUST_EXIST);
 if (!relationship_service::learner_enrolled_in_course($childid, $courseid)) {
     throw new moodle_exception('notenrolled', 'tool_guardianlink');
 }
+// Course policy: result-sharing is a teacher proxy message; respect a course that disabled it.
+if (!relationship_service::course_allows_teacher_proxy($courseid)) {
+    throw new moodle_exception('teacherproxydisabled', 'tool_guardianlink');
+}
+// Gradebook visibility is a separate Moodle permission.
+$canviewgrades = has_capability('moodle/grade:viewall', $context);
 $PAGE->set_context($context);
 $PAGE->set_url(new moodle_url('/admin/tool/guardianlink/sendresults.php', ['childid' => $childid, 'courseid' => $courseid]));
 $PAGE->set_pagelayout('incourse');
@@ -58,10 +64,10 @@ foreach (
     $templates[$t->id] = $t;
 }
 
-$gradeitems = progress_service::gradeitem_options($courseid);
+$gradeitems = $canviewgrades ? progress_service::gradeitem_options($courseid) : [];
 
 $templateid = optional_param('templateid', 0, PARAM_INT);
-$gradeitemid = optional_param('gradeitemid', 0, PARAM_INT);
+$gradeitemid = $canviewgrades ? optional_param('gradeitemid', 0, PARAM_INT) : 0;
 $dosend = optional_param('send', 0, PARAM_BOOL);
 
 echo $OUTPUT->header();
@@ -82,7 +88,14 @@ if (empty($templates)) {
 $extra = $gradeitemid ? ['gradeitemid' => $gradeitemid] : [];
 
 if ($dosend && $templateid && isset($templates[$templateid]) && confirm_sesskey()) {
-    $result = message_service::send_proxy_template((int)$USER->id, $childid, $courseid, $templates[$templateid], $extra);
+    $result = message_service::send_proxy_template(
+        (int)$USER->id,
+        $childid,
+        $courseid,
+        $templates[$templateid],
+        $extra,
+        $canviewgrades
+    );
     echo $OUTPUT->notification(
         get_string('sendresultsdone', 'tool_guardianlink', (object)$result),
         $result['recipients'] ? 'success' : 'warning'

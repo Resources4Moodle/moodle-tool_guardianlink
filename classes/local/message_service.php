@@ -81,6 +81,10 @@ class message_service {
      */
     public static function send_proxy_message(int $senderid, int $learnerid, int $courseid, string $subject, string $body): array {
         global $DB;
+        // Course policy gate: respect a course that has disabled teacher proxy messaging.
+        if ($courseid > 0 && !relationship_service::course_allows_teacher_proxy($courseid)) {
+            return ['sent' => 0, 'threads' => []];
+        }
         $recipients = relationship_service::get_proxy_recipients($learnerid, $courseid);
         $sent = 0;
         $threads = [];
@@ -141,6 +145,8 @@ class message_service {
      * @param int $courseid
      * @param \stdClass $template Object with ->subject, ->body, ->bodyformat.
      * @param array $extra Extra context (e.g. ['gradeitemid' => 42]).
+     * @param bool $sendercanviewgrades Whether the sender may view the gradebook; grade tokens are
+     *                                  only included when true AND the adult's scope permits grades.
      * @return array ['sent' => int, 'recipients' => int]
      */
     public static function send_proxy_template(
@@ -148,13 +154,21 @@ class message_service {
         int $learnerid,
         int $courseid,
         \stdClass $template,
-        array $extra = []
+        array $extra = [],
+        bool $sendercanviewgrades = false
     ): array {
+        // Course policy gate (also enforced per-recipient inside send_one_off()).
+        if ($courseid > 0 && !relationship_service::course_allows_teacher_proxy($courseid)) {
+            return ['sent' => 0, 'recipients' => 0];
+        }
         $recipients = relationship_service::get_proxy_recipients($learnerid, $courseid);
         $sent = 0;
         foreach ($recipients as $recipient) {
             $adultid = (int)$recipient->id;
-            $grades = relationship_service::can_access_child($adultid, $learnerid, $courseid, 'grades');
+            // Grades are included only when the SENDER may view the gradebook AND the adult's scope
+            // permits grades. Default $sendercanviewgrades is false, so callers must opt in explicitly.
+            $grades = $sendercanviewgrades
+                && relationship_service::can_access_child($adultid, $learnerid, $courseid, 'grades');
             $ctx = template_service::context($adultid, $learnerid, $courseid, $grades, $extra);
             $rendered = template_service::render($template, $ctx);
             if (
@@ -250,16 +264,36 @@ class message_service {
      * @param int $learnerid
      * @param int $courseid
      * @param \stdClass $template
+     * @param bool $sendercanviewgrades Whether the sender may view the gradebook; grade tokens are
+     *                                  only included when true AND the adult's scope permits grades.
      * @return array ['sent' => int, 'recipients' => int]
      */
-    public static function send_template_to_adults(int $senderid, int $learnerid, int $courseid, \stdClass $template): array {
+    public static function send_template_to_adults(
+        int $senderid,
+        int $learnerid,
+        int $courseid,
+        \stdClass $template,
+        bool $sendercanviewgrades = false
+    ): array {
+        // Course policy gate: respect a course that has disabled teacher proxy messaging.
+        if ($courseid > 0 && !relationship_service::course_allows_teacher_proxy($courseid)) {
+            return ['sent' => 0, 'recipients' => 0];
+        }
         $recipients = relationship_service::get_proxy_recipients($learnerid, $courseid);
         $sender = \core_user::get_user($senderid, '*', MUST_EXIST);
         $noreply = \core_user::get_noreply_user();
         $label = get_string('messagefrom', 'tool_guardianlink', fullname($sender));
         $sent = 0;
         foreach ($recipients as $recipient) {
-            $ctx = \tool_guardianlink\local\template_service::context((int)$recipient->id, $learnerid, $courseid, true);
+            // Include grade tokens only when the sender may view grades AND the adult's scope permits.
+            $includegrades = $sendercanviewgrades
+                && relationship_service::can_access_child((int)$recipient->id, $learnerid, $courseid, 'grades');
+            $ctx = \tool_guardianlink\local\template_service::context(
+                (int)$recipient->id,
+                $learnerid,
+                $courseid,
+                $includegrades
+            );
             $rendered = \tool_guardianlink\local\template_service::render($template, $ctx);
             $message = new \core\message\message();
             $message->component = 'tool_guardianlink';
@@ -322,6 +356,16 @@ class message_service {
         $sender = \core_user::get_user($senderid, '*', MUST_EXIST);
         $recipient = \core_user::get_user($adultid, '*', IGNORE_MISSING);
         if (!$recipient) {
+            return false;
+        }
+        // Fail closed: a one-off classroom message may only reach an adult who holds a live messaging
+        // scope for this learner/course, and only when the course policy permits teacher proxy
+        // messaging. This protects the public method from any caller that has not pre-checked
+        // eligibility. Privileged administrative notices must use a separate capability-gated path.
+        if (!relationship_service::can_access_child($adultid, $learnerid, $courseid, 'messaging')) {
+            return false;
+        }
+        if ($courseid > 0 && !relationship_service::course_allows_teacher_proxy($courseid)) {
             return false;
         }
         $rel = relationship_service::get_active_relationship($adultid, $learnerid);

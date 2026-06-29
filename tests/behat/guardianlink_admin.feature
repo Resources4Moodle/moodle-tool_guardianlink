@@ -17,6 +17,12 @@ Feature: GuardianLink administration pages are reachable
     And I should see "Relationship registry"
     And I should see "Privacy guarantees"
 
+  Scenario: The help manual serves authorised adults and explains its inclusive language
+    When I navigate to "Plugins > Admin tools > GuardianLink > Help manual" in site administration
+    Then I should see "Words we use"
+    And I should see "For authorised adults: your learner support dashboard"
+    And I should see "Higher education: student-authorised supporters"
+
   Scenario: The consolidated report page loads
     When I navigate to "Plugins > Admin tools > GuardianLink > Oversight reports" in site administration
     Then I should see "Consolidated figures"

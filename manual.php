@@ -38,6 +38,8 @@ $PAGE->set_heading(get_string('manualtitle', 'tool_guardianlink'));
 // help text is translatable. Section ids match the tool_guardianlink_help_link() anchors.
 $sections = [
     'overview' => 'everyone',
+    'terminology' => 'everyone',
+    'foradults' => 'adult',
     'relationships' => 'admin',
     'registry' => 'teacher',
     'uploadparents' => 'admin',
@@ -62,6 +64,7 @@ $sections = [
     'api' => 'developer',
     'assisted' => 'admin',
     'independent' => 'everyone',
+    'highered' => 'admin',
     'settings' => 'admin',
     'privacy' => 'everyone',
 ];

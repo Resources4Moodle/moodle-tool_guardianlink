@@ -1030,6 +1030,67 @@ class relationship_service {
     }
 
     /**
+     * The learner's enrolled courses that an authorised adult may actually see (the classroom view).
+     *
+     * Expands ALL scope kinds into concrete course cards: a direct course scope, a category scope
+     * (every enrolled course in that category), and learner/site scopes (every enrolled course) all
+     * resolve here, because eligibility is decided per course by can_access_child(...,'overview').
+     * This is the single source of truth for adult-facing course lists (dashboard, digests, mobile).
+     *
+     * @param int $adultid
+     * @param int $learnerid
+     * @return array Course records keyed by course id (id, shortname, fullname, visible, dates, category).
+     */
+    public static function visible_courses_for_adult(int $adultid, int $learnerid): array {
+        global $CFG;
+        require_once($CFG->libdir . '/enrollib.php');
+        $out = [];
+        if (!self::get_active_relationship($adultid, $learnerid)) {
+            return $out;
+        }
+        $fields = 'id, shortname, fullname, visible, startdate, enddate, category';
+        foreach (enrol_get_users_courses($learnerid, true, $fields) as $course) {
+            if (self::can_access_child($adultid, $learnerid, (int)$course->id, 'overview')) {
+                $out[(int)$course->id] = $course;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Why an adult can see a course — the scope kind that grants access — for a plain-language reason.
+     *
+     * @param int $adultid
+     * @param int $learnerid
+     * @param int $courseid
+     * @return string One of 'course', 'category', 'learner', 'site', or '' if none currently grants it.
+     */
+    public static function access_reason_for_course(int $adultid, int $learnerid, int $courseid): string {
+        $rel = self::get_active_relationship($adultid, $learnerid);
+        if (!$rel) {
+            return '';
+        }
+        $coursecat = 0;
+        foreach (self::get_active_scopes((int)$rel->id) as $scope) {
+            if ($scope->scopekind === 'course' && (int)$scope->courseid === $courseid) {
+                return 'course';
+            }
+            if (in_array($scope->scopekind, ['learner', 'site'], true)) {
+                return $scope->scopekind;
+            }
+        }
+        // Category scope (only relevant once we know the course's category).
+        global $DB;
+        $coursecat = (int)$DB->get_field('course', 'category', ['id' => $courseid]);
+        foreach (self::get_active_scopes((int)$rel->id) as $scope) {
+            if ($scope->scopekind === 'category' && (int)$scope->categoryid === $coursecat) {
+                return 'category';
+            }
+        }
+        return '';
+    }
+
+    /**
      * Whether a learner is actively enrolled in an existing course.
      *
      * Used to reject stale or guessed childid/courseid pairings before any per-course action
@@ -1223,8 +1284,15 @@ class relationship_service {
             if ($cid <= 0 || !self::learner_enrolled_in_course($learnerid, $cid)) {
                 continue;
             }
-            if ($requesterrel && !self::can_access_child($requesterid, $learnerid, $cid, 'overview')) {
-                continue;
+            if ($requesterrel) {
+                // An adult requester may only propose for courses within their scope AND only where the
+                // course policy still permits adult proposals. (Staff via approvetutors are exempt.)
+                if (!self::can_access_child($requesterid, $learnerid, $cid, 'overview')) {
+                    continue;
+                }
+                if (!self::course_allows_parent_propose($cid)) {
+                    continue;
+                }
             }
             $courseids[$cid] = $cid;
         }
@@ -1526,21 +1594,44 @@ class relationship_service {
      *
      * @param int $courseid Target course id, or 0 for no course constraint (audience-wide scopes).
      * @param string $prefix Unique named-parameter prefix.
+     * @param int $categoryid When > 0 (and $courseid is 0), require the scope to intersect this
+     *                        category: a learner/site scope, a category scope for this category, or
+     *                        a course scope whose course belongs to this category.
+     * @param bool $broadscopeonly When true (and no course/category target), require a learner/site
+     *                             scope — used for cohort audiences, which are not a teaching context,
+     *                             so a single course-specific scope must not satisfy a cohort-wide send.
      * @return array [string $sqlfragment, array $params]
      */
-    public static function messaging_scope_sql(int $courseid, string $prefix = 'msc'): array {
+    public static function messaging_scope_sql(
+        int $courseid,
+        string $prefix = 'msc',
+        int $categoryid = 0,
+        bool $broadscopeonly = false
+    ): array {
         global $DB;
         $now = time();
         $sql = " AND (s.starttime = 0 OR s.starttime <= :{$prefix}snow1)"
              . " AND (s.endtime = 0 OR s.endtime >= :{$prefix}snow2)";
         $params = ["{$prefix}snow1" => $now, "{$prefix}snow2" => $now];
         if ($courseid > 0) {
-            $categoryid = (int)$DB->get_field('course', 'category', ['id' => $courseid]);
+            $coursecat = (int)$DB->get_field('course', 'category', ['id' => $courseid]);
             $sql .= " AND (s.courseid = :{$prefix}cid"
                   . " OR s.scopekind IN ('learner', 'site')"
                   . " OR (s.scopekind = 'category' AND s.categoryid = :{$prefix}cat))";
             $params["{$prefix}cid"] = $courseid;
-            $params["{$prefix}cat"] = $categoryid > 0 ? $categoryid : -1;
+            $params["{$prefix}cat"] = $coursecat > 0 ? $coursecat : -1;
+        } else if ($categoryid > 0) {
+            // Category audience: the scope must actually intersect the target category, not merely
+            // be any active scope for the learner. Prevents a Course-B scope receiving a Category-A send.
+            $sql .= " AND (s.scopekind IN ('learner', 'site')"
+                  . " OR (s.scopekind = 'category' AND s.categoryid = :{$prefix}tcat)"
+                  . " OR (s.scopekind = 'course' AND EXISTS ("
+                  . "       SELECT 1 FROM {course} {$prefix}c"
+                  . "        WHERE {$prefix}c.id = s.courseid AND {$prefix}c.category = :{$prefix}tcat2)))";
+            $params["{$prefix}tcat"] = $categoryid;
+            $params["{$prefix}tcat2"] = $categoryid;
+        } else if ($broadscopeonly) {
+            $sql .= " AND s.scopekind IN ('learner', 'site')";
         }
         return [$sql, $params];
     }
@@ -2038,6 +2129,42 @@ class relationship_service {
         }
         $rec = $DB->get_record('tool_guardianlink_courseconfig', ['courseid' => $courseid]);
         return $rec ?: null;
+    }
+
+    /**
+     * Whether teacher proxy messaging is permitted for a course (course policy gate).
+     *
+     * Courses with no explicit policy row default to ENABLED, preserving prior behaviour. Once a
+     * teacher/manager saves the course policy, the stored allowteacherproxy flag is authoritative.
+     * This is enforced in both pages and service methods so no caller can bypass the course policy.
+     *
+     * @param int $courseid
+     * @return bool
+     */
+    public static function course_allows_teacher_proxy(int $courseid): bool {
+        if ($courseid <= 0) {
+            return false;
+        }
+        $cfg = self::get_course_config($courseid);
+        // No explicit policy row → enabled by default (backwards compatible).
+        return !$cfg || !empty($cfg->allowteacherproxy);
+    }
+
+    /**
+     * Whether authorised adults may propose tutors/support contacts for a course (course policy gate).
+     *
+     * Courses with no explicit policy row default to ENABLED. Enforced in nomination and tutor-request
+     * flows so a course that has disabled proposals cannot be bypassed.
+     *
+     * @param int $courseid 0 for non-course-scoped proposals (always allowed at this gate).
+     * @return bool
+     */
+    public static function course_allows_parent_propose(int $courseid): bool {
+        if ($courseid <= 0) {
+            return true;
+        }
+        $cfg = self::get_course_config($courseid);
+        return !$cfg || !empty($cfg->allowparentpropose);
     }
 
     /**

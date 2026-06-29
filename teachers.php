@@ -47,6 +47,10 @@ if (!$isteacher && !$isadult) {
 if (!relationship_service::learner_enrolled_in_course($childid, $courseid)) {
     throw new moodle_exception('notenrolled', 'tool_guardianlink');
 }
+// Course policy: teacher proxy messaging can be disabled per course. Gradebook visibility is a
+// separate Moodle permission from being able to message adults.
+$proxyok = relationship_service::course_allows_teacher_proxy($courseid);
+$canviewgrades = has_capability('moodle/grade:viewall', $context);
 
 $PAGE->set_context($context);
 $PAGE->set_url(new moodle_url('/admin/tool/guardianlink/teachers.php', ['childid' => $childid, 'courseid' => $courseid]));
@@ -62,9 +66,13 @@ echo \tool_guardianlink\local\ui::help_link('teachers');
 echo html_writer::tag('p', get_string('selectlearner', 'tool_guardianlink') . ': ' . s(fullname($child)));
 echo html_writer::tag('p', get_string('course') . ': ' . s(format_string($course->fullname)));
 
-if ($isteacher) {
-    $gradeitems = progress_service::gradeitem_options($courseid);
-    $activityph = template_service::course_activity_placeholders($courseid);
+if ($isteacher && !$proxyok) {
+    echo $OUTPUT->notification(get_string('teacherproxydisabled', 'tool_guardianlink'), 'warning');
+}
+if ($isteacher && $proxyok) {
+    // Grade tokens/options are only offered to a sender who may view the gradebook.
+    $gradeitems = $canviewgrades ? progress_service::gradeitem_options($courseid) : [];
+    $activityph = $canviewgrades ? template_service::course_activity_placeholders($courseid) : [];
     $form = new \tool_guardianlink\form\proxy_message_form(
         null,
         ['gradeitems' => $gradeitems, 'activityplaceholders' => $activityph]
@@ -113,8 +121,15 @@ if ($isteacher) {
             'body' => is_array($data->message) ? ($data->message['text'] ?? '') : (string)$data->message,
             'bodyformat' => is_array($data->message) ? (int)($data->message['format'] ?? FORMAT_HTML) : FORMAT_HTML,
         ];
-        $extra = !empty($data->gradeitemid) ? ['gradeitemid' => (int)$data->gradeitemid] : [];
-        $result = message_service::send_proxy_template((int)$USER->id, $childid, $courseid, $template, $extra);
+        $extra = ($canviewgrades && !empty($data->gradeitemid)) ? ['gradeitemid' => (int)$data->gradeitemid] : [];
+        $result = message_service::send_proxy_template(
+            (int)$USER->id,
+            $childid,
+            $courseid,
+            $template,
+            $extra,
+            $canviewgrades
+        );
         redirect(
             $PAGE->url,
             get_string('proxysentsummary', 'tool_guardianlink', (object)$result),

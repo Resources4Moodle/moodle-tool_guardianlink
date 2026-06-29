@@ -485,6 +485,38 @@ final class security_test extends \advanced_testcase {
     }
 
     /**
+     * Broad scopes expand into concrete visible course cards for the adult (GATE-07).
+     */
+    public function test_visible_courses_expand_broad_scopes(): void {
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $category = $gen->create_category();
+        $course = $gen->create_course(['category' => $category->id]);
+        $other = $gen->create_course();
+        $adult = $gen->create_user();
+        $learner = $gen->create_user();
+        $gen->enrol_user($learner->id, $course->id);
+        $gen->enrol_user($learner->id, $other->id);
+        rs::ensure_default_profiles();
+        $relid = rs::add_or_update_relationship(['adultid' => $adult->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'authoritystatus' => 'verified',
+            'accessprofile' => 'family_full'], 2);
+        // Only a CATEGORY scope — it must still surface the enrolled course in that category.
+        rs::set_scopes($relid, [['scopekind' => 'category', 'categoryid' => $category->id,
+            'allowoverview' => 1]], 2, 'family_full');
+
+        $visible = array_keys(rs::visible_courses_for_adult($adult->id, $learner->id));
+        $this->assertContains((int)$course->id, $visible, 'category scope must expand to its course');
+        $this->assertNotContains((int)$other->id, $visible, 'course in another category must not appear');
+        $this->assertSame('category', rs::access_reason_for_course($adult->id, $learner->id, (int)$course->id));
+
+        // Expired category scope → no visible courses.
+        rs::set_scopes($relid, [['scopekind' => 'category', 'categoryid' => $category->id,
+            'allowoverview' => 1, 'endtime' => time() - 3600]], 2, 'family_full', '', true);
+        $this->assertEmpty(rs::visible_courses_for_adult($adult->id, $learner->id));
+    }
+
+    /**
      * A grade item from another course must not resolve when rendering for a given course (#6).
      */
     public function test_activity_grade_by_item_is_course_bound(): void {
@@ -503,6 +535,147 @@ final class security_test extends \advanced_testcase {
         // Rendering for course B (the item's own course) resolves; rendering for course A must not.
         $this->assertNotNull(ps::activity_grade_by_item((int)$itemb->id, (int)$learner->id, (int)$courseb->id));
         $this->assertNull(ps::activity_grade_by_item((int)$itemb->id, (int)$learner->id, (int)$coursea->id));
+    }
+
+    /**
+     * A course that disables teacher proxy messaging blocks proxy sends at the service layer (GATE-01).
+     */
+    public function test_course_proxy_policy_blocks_teacher_sends(): void {
+        $this->resetAfterTest();
+        $this->redirectMessages();
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course();
+        $teacher = $gen->create_user();
+        $adult = $gen->create_user();
+        $learner = $gen->create_user();
+        $gen->enrol_user($learner->id, $course->id);
+        rs::ensure_default_profiles();
+        $relid = rs::add_or_update_relationship(['adultid' => $adult->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'authoritystatus' => 'verified',
+            'accessprofile' => 'family_full'], 2);
+        rs::set_scopes($relid, [['scopekind' => 'course', 'courseid' => $course->id,
+            'allowmessaging' => 1, 'allowteachercontact' => 1]], 2, 'family_full');
+
+        // Default (no policy row) allows proxy messaging.
+        $this->assertTrue(rs::course_allows_teacher_proxy($course->id));
+        $this->assertGreaterThan(0, ms::send_proxy_message($teacher->id, $learner->id, $course->id, 'S', 'B')['sent']);
+
+        // Disabling the course policy blocks both the bulk-style and one-off send paths.
+        rs::save_course_config($course->id, ['allowteacherproxy' => 0], 2);
+        $this->assertFalse(rs::course_allows_teacher_proxy($course->id));
+        $this->assertSame(0, ms::send_proxy_message($teacher->id, $learner->id, $course->id, 'S', 'B')['sent']);
+        $this->assertFalse(ms::send_one_off($adult->id, $learner->id, $course->id, 'S', 'B', $teacher->id));
+    }
+
+    /**
+     * send_one_off() fails closed unless the adult has a live messaging scope for the learner/course (GATE-03).
+     */
+    public function test_send_one_off_requires_messaging_eligibility(): void {
+        $this->resetAfterTest();
+        $this->redirectMessages();
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course();
+        $teacher = $gen->create_user();
+        $adult = $gen->create_user();
+        $stranger = $gen->create_user();
+        $learner = $gen->create_user();
+        $gen->enrol_user($learner->id, $course->id);
+        rs::ensure_default_profiles();
+        $relid = rs::add_or_update_relationship(['adultid' => $adult->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'authoritystatus' => 'verified',
+            'accessprofile' => 'family_full'], 2);
+        rs::set_scopes($relid, [['scopekind' => 'course', 'courseid' => $course->id,
+            'allowmessaging' => 1, 'allowteachercontact' => 1]], 2, 'family_full');
+
+        // Unrelated adult: rejected. Related adult with messaging scope: accepted.
+        $this->assertFalse(ms::send_one_off($stranger->id, $learner->id, $course->id, 'S', 'B', $teacher->id));
+        $this->assertTrue(ms::send_one_off($adult->id, $learner->id, $course->id, 'S', 'B', $teacher->id));
+
+        // Remove the messaging permission from the scope: now rejected.
+        rs::set_scopes($relid, [['scopekind' => 'course', 'courseid' => $course->id,
+            'allowmessaging' => 0, 'allowteachercontact' => 1]], 2, 'family_full', '', true);
+        $this->assertFalse(ms::send_one_off($adult->id, $learner->id, $course->id, 'S', 'B', $teacher->id));
+    }
+
+    /**
+     * A category bulk send only reaches adults whose messaging scope intersects that category (GATE-04).
+     */
+    public function test_bulk_category_audience_intersects_scope(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+        $gen = $this->getDataGenerator();
+        $cata = $gen->create_category();
+        $catb = $gen->create_category();
+        $coursea = $gen->create_course(['category' => $cata->id]);
+        $courseb = $gen->create_course(['category' => $catb->id]);
+        $learner = $gen->create_user();
+        $gen->enrol_user($learner->id, $coursea->id);
+        $gen->enrol_user($learner->id, $courseb->id);
+        $inadult = $gen->create_user();   // Scoped to Course A (in Category A) — should receive.
+        $outadult = $gen->create_user();  // Scoped to Course B (in Category B) — should NOT receive.
+        rs::ensure_default_profiles();
+        $rin = rs::add_or_update_relationship(['adultid' => $inadult->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'authoritystatus' => 'verified',
+            'accessprofile' => 'family_full'], 2);
+        rs::set_scopes($rin, [['scopekind' => 'course', 'courseid' => $coursea->id,
+            'allowmessaging' => 1, 'allowteachercontact' => 1]], 2, 'family_full');
+        $rout = rs::add_or_update_relationship(['adultid' => $outadult->id, 'learnerid' => $learner->id,
+            'reltype' => 'carer', 'status' => 'active', 'authoritystatus' => 'verified',
+            'accessprofile' => 'family_full'], 2);
+        rs::set_scopes($rout, [['scopekind' => 'course', 'courseid' => $courseb->id,
+            'allowmessaging' => 1, 'allowteachercontact' => 1]], 2, 'family_full');
+
+        $criteria = bms::normalise_criteria(['audiencetype' => 'category', 'categoryid' => $cata->id,
+            'excluderestricted' => 0]);
+        $ids = array_map(fn($r) => (int)$r->id, bms::resolve_recipients($criteria));
+        $this->assertContains((int)$inadult->id, $ids, 'Category-A-scoped adult must receive');
+        $this->assertNotContains((int)$outadult->id, $ids, 'Course-B/Category-B-scoped adult must not receive a Category-A send');
+    }
+
+    /**
+     * Grade tokens are not rendered for a sender who cannot view the gradebook, even if the adult is
+     * scoped for grades (GATE-02).
+     */
+    public function test_proxy_template_excludes_grades_without_sender_capability(): void {
+        global $CFG;
+        require_once($CFG->libdir . '/gradelib.php');
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course();
+        $teacher = $gen->create_user();
+        $adult = $gen->create_user();
+        $learner = $gen->create_user();
+        $gen->enrol_user($learner->id, $course->id);
+        rs::ensure_default_profiles();
+        $relid = rs::add_or_update_relationship(['adultid' => $adult->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'authoritystatus' => 'verified',
+            'accessprofile' => 'family_full'], 2);
+        rs::set_scopes($relid, [['scopekind' => 'course', 'courseid' => $course->id,
+            'allowmessaging' => 1, 'allowteachercontact' => 1, 'allowgrades' => 1]], 2, 'family_full');
+        // Give the learner a real course grade.
+        $gi = new \grade_item($gen->create_grade_item([
+            'courseid' => $course->id, 'itemtype' => 'manual', 'itemname' => 'Task', 'grademax' => 100,
+        ]), false);
+        $gi->update_final_grade($learner->id, 77);
+        grade_regrade_final_grades($course->id);
+        // The {testresult} token reflects the specific grade item; pass it via $extra for a deterministic value.
+        $template = (object)['subject' => 'Re {learnerfullname}', 'body' => 'Score: {testresult}', 'bodyformat' => FORMAT_HTML];
+        $extra = ['gradeitemid' => (int)$gi->id];
+
+        // Sender CANNOT view grades: the grade must not appear.
+        $sink = $this->redirectMessages();
+        ms::send_proxy_template($teacher->id, $learner->id, $course->id, $template, $extra, false);
+        $msgs = $sink->get_messages();
+        $this->assertNotEmpty($msgs);
+        $this->assertStringNotContainsString('77', $msgs[0]->fullmessagehtml, 'grade leaked without sender capability');
+        $sink->close();
+
+        // Sender CAN view grades and the adult is scoped for grades: the grade appears.
+        $sink = $this->redirectMessages();
+        ms::send_proxy_template($teacher->id, $learner->id, $course->id, $template, $extra, true);
+        $msgs = $sink->get_messages();
+        $this->assertNotEmpty($msgs);
+        $this->assertStringContainsString('77', $msgs[0]->fullmessagehtml);
     }
 
     /**

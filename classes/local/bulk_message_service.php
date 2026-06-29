@@ -134,13 +134,27 @@ class bulk_message_service {
         }
         $now = time();
         [$insql, $params] = $DB->get_in_or_equal($learnerids, SQL_PARAMS_NAMED, 'lid');
-        // Shared scope eligibility (active scope time window + course/learner/site/category coverage),
-        // identical to proxy messaging. For broad audiences (category/cohort/site) there is no single
-        // course, so only the scope time window applies.
-        $coursetarget = (in_array($criteria['audiencetype'], ['course', 'overdue'], true) && $criteria['courseid'] > 0)
-            ? (int)$criteria['courseid']
-            : 0;
-        [$coursejoin, $scopeparams] = relationship_service::messaging_scope_sql($coursetarget, 'bmsc');
+        // Shared scope eligibility (active scope time window + scope coverage), identical to proxy
+        // messaging, but intersected with the audience context so recipients cannot be over-broad:
+        // - course/overdue: the scope must cover that course (direct/learner/site/category).
+        // - category: the scope must intersect the target category (not merely any active scope).
+        // - cohort: a cohort is not a teaching context, so require a learner/site scope.
+        $coursetarget = 0;
+        $cattarget = 0;
+        $broadscopeonly = false;
+        if (in_array($criteria['audiencetype'], ['course', 'overdue'], true) && $criteria['courseid'] > 0) {
+            $coursetarget = (int)$criteria['courseid'];
+        } else if ($criteria['audiencetype'] === 'category' && $criteria['categoryid'] > 0) {
+            $cattarget = (int)$criteria['categoryid'];
+        } else if ($criteria['audiencetype'] === 'cohort') {
+            $broadscopeonly = true;
+        }
+        [$coursejoin, $scopeparams] = relationship_service::messaging_scope_sql(
+            $coursetarget,
+            'bmsc',
+            $cattarget,
+            $broadscopeonly
+        );
         $params += $scopeparams;
         $where = '';
         if ($criteria['legalonly']) {
