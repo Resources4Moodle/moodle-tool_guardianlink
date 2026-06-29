@@ -369,6 +369,54 @@ final class security_test extends \advanced_testcase {
     }
 
     /**
+     * A tutor request stores only courses the learner is enrolled in and that are in the requester's scope.
+     */
+    public function test_tutor_request_filters_courses_by_scope_and_enrolment(): void {
+        global $DB;
+        $this->resetAfterTest();
+        $gen = $this->getDataGenerator();
+        $inscope = $gen->create_course();
+        $notenrolled = $gen->create_course();
+        $outofscope = $gen->create_course();
+        $parent = $gen->create_user();
+        $tutor = $gen->create_user();
+        $learner = $gen->create_user();
+        $gen->enrol_user($learner->id, $inscope->id);
+        $gen->enrol_user($learner->id, $outofscope->id);
+        rs::ensure_default_profiles();
+        rs::ensure_default_relationship_types();
+        // Legal parent scoped to $inscope only (so they can request tutoring there, not in $outofscope).
+        rs::add_or_update_relationship(['adultid' => $parent->id, 'learnerid' => $learner->id,
+            'reltype' => 'legal_parent', 'status' => 'active', 'authoritystatus' => 'verified', 'legal' => 1,
+            'accessprofile' => 'family_full', 'courseids' => (string)$inscope->id], 2);
+
+        $reqid = rs::create_tutor_request([
+            'tutorid' => $tutor->id, 'learnerid' => $learner->id,
+            'courseids' => $inscope->id . ',' . $notenrolled->id . ',' . $outofscope->id,
+        ], $parent->id);
+        $stored = $DB->get_field('tool_guardianlink_tutorreq', 'courseids', ['id' => $reqid]);
+        $ids = array_filter(array_map('intval', explode(',', (string)$stored)));
+        $this->assertContains((int)$inscope->id, $ids);
+        $this->assertNotContains((int)$notenrolled->id, $ids, 'learner not enrolled — must be dropped');
+        $this->assertNotContains((int)$outofscope->id, $ids, 'course not in requester scope — must be dropped');
+    }
+
+    /**
+     * A course-specific health record requires the learner to be enrolled in that course.
+     */
+    public function test_health_record_requires_enrolment_for_course_scope(): void {
+        $this->resetAfterTest();
+        set_config('enablehealthrecords', 1, 'tool_guardianlink');
+        $gen = $this->getDataGenerator();
+        $course = $gen->create_course();
+        $learner = $gen->create_user();
+        // Learner is NOT enrolled in $course.
+        $this->expectException(\invalid_parameter_exception::class);
+        rs::upsert_health_record(['childid' => $learner->id, 'title' => 'Bad',
+            'visibility' => 'emergency_only', 'status' => 'active', 'courseid' => $course->id], 2);
+    }
+
+    /**
      * A grade item from another course must not resolve when rendering for a given course (#6).
      */
     public function test_activity_grade_by_item_is_course_bound(): void {

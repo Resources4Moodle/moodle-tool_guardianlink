@@ -68,6 +68,31 @@ class supervision_service {
     }
 
     /**
+     * Whether independent access may currently be offered for this adult/learner/course.
+     *
+     * The course must opt in (teacher switch), the learner must be actively enrolled, and the adult
+     * must hold course access. Mirrors the per-course eligibility used by offered_courses() so the
+     * acknowledgement action cannot be forced for an arbitrary or out-of-scope course id.
+     *
+     * @param int $guardianid
+     * @param int $childid
+     * @param int $courseid
+     * @return bool
+     */
+    public static function course_offer_valid(int $guardianid, int $childid, int $courseid): bool {
+        global $CFG;
+        require_once($CFG->libdir . '/enrollib.php');
+        if (!self::course_allows_independent($courseid)) {
+            return false;
+        }
+        if (!relationship_service::can_access_child($guardianid, $childid, $courseid, 'overview')) {
+            return false;
+        }
+        $context = \context_course::instance($courseid, IGNORE_MISSING);
+        return $context && is_enrolled($context, $childid, '', true);
+    }
+
+    /**
      * Whether the learner has any active authorised-adult relationship (i.e. supervision applies).
      *
      * @param int $childid
@@ -99,6 +124,12 @@ class supervision_service {
     ): int {
         global $DB;
         if (!relationship_service::get_active_relationship($guardianid, $childid)) {
+            throw new \moodle_exception('accessdenied', 'tool_guardianlink');
+        }
+        // Granting independent access must re-validate the course server-side: the submitted course id
+        // could be arbitrary. The course must opt in, the learner must be actively enrolled, and the
+        // adult must have course access. (Revoking is always permitted, even if the offer was withdrawn.)
+        if ($allow && !self::course_offer_valid($guardianid, $childid, $courseid)) {
             throw new \moodle_exception('accessdenied', 'tool_guardianlink');
         }
         $now = time();

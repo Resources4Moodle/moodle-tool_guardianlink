@@ -37,6 +37,10 @@ $context = context_course::instance($courseid);
 require_capability('tool/guardianlink:sendproxymessages', $context);
 
 $child = core_user::get_user($childid, '*', MUST_EXIST);
+// Reject stale/guessed childid+courseid pairings: the learner must be enrolled in this course.
+if (!relationship_service::learner_enrolled_in_course($childid, $courseid)) {
+    throw new moodle_exception('notenrolled', 'tool_guardianlink');
+}
 $PAGE->set_context($context);
 $PAGE->set_url(new moodle_url('/admin/tool/guardianlink/sendresults.php', ['childid' => $childid, 'courseid' => $courseid]));
 $PAGE->set_pagelayout('incourse');

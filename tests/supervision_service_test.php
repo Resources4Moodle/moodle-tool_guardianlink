@@ -131,6 +131,20 @@ final class supervision_service_test extends \advanced_testcase {
     }
 
     /**
+     * Acknowledgement cannot be forced for a course the teacher has not opted into (#12).
+     */
+    public function test_acknowledge_rejects_unoffered_course(): void {
+        $this->resetAfterTest();
+        set_config('allowindependentaccess', 1, 'tool_guardianlink');
+        $f = $this->fixture();
+        // The relationship exists and the learner is enrolled, but key 2 (teacher course switch) is OFF,
+        // so the course does not offer independent access — acknowledging must be refused server-side.
+        $this->assertFalse(supervision_service::course_allows_independent($f['course']->id));
+        $this->expectException(\moodle_exception::class);
+        supervision_service::acknowledge($f['adult']->id, $f['learner']->id, $f['course']->id, true, $f['adult']->id);
+    }
+
+    /**
      * Feature B: the higher-ed observer profile grants grades + teacher contact only.
      */
     public function test_highered_observer_profile(): void {

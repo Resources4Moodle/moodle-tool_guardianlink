@@ -992,6 +992,26 @@ class relationship_service {
     }
 
     /**
+     * Whether a learner is actively enrolled in an existing course.
+     *
+     * Used to reject stale or guessed childid/courseid pairings before any per-course action
+     * (teacher contact, results email, tutor-request scope, course-specific health record).
+     *
+     * @param int $learnerid
+     * @param int $courseid
+     * @return bool
+     */
+    public static function learner_enrolled_in_course(int $learnerid, int $courseid): bool {
+        global $CFG;
+        require_once($CFG->libdir . '/enrollib.php');
+        if ($learnerid <= 0 || $courseid <= 0) {
+            return false;
+        }
+        $context = \context_course::instance($courseid, IGNORE_MISSING);
+        return $context && is_enrolled($context, $learnerid, '', true);
+    }
+
+    /**
      * Whether governed assisted access (Moodle "log in as") is available on this site.
      *
      * Assisted access is an EXPERIMENTAL, high-risk capability and is out of scope for the
@@ -1155,8 +1175,23 @@ class relationship_service {
             }
         }
         $now = time();
-        $courseidcsv = clean_param((string)self::value($data, 'courseids', ''), PARAM_TEXT);
-        $courseids = array_filter(array_map('intval', explode(',', $courseidcsv)));
+        // Validate requested courses before storing: the learner must be actively enrolled, and an
+        // adult requester may only propose tutoring for courses already within their own scope. Staff
+        // requesters (approvetutors, no relationship) are constrained to enrolment only.
+        $requesterrel = self::get_active_relationship($requesterid, $learnerid);
+        $courseids = [];
+        foreach (explode(',', (string)self::value($data, 'courseids', '')) as $rawcourse) {
+            $cid = self::resolve_course_ref((string)$rawcourse);
+            if ($cid <= 0 || !self::learner_enrolled_in_course($learnerid, $cid)) {
+                continue;
+            }
+            if ($requesterrel && !self::can_access_child($requesterid, $learnerid, $cid, 'overview')) {
+                continue;
+            }
+            $courseids[$cid] = $cid;
+        }
+        $courseids = array_values($courseids);
+        $courseidcsv = implode(',', $courseids);
         // Trickle-down cap: a parent's proposed end-time cannot exceed the course/admin maximum.
         $endtime = self::cap_grant_endtime((int)self::value($data, 'endtime', 0), $courseids);
         $record = (object)[
@@ -1303,9 +1338,17 @@ class relationship_service {
             get_config('tool_guardianlink', 'requirehealthapproval') ? self::STATUS_PENDING : self::STATUS_ACTIVE
         ), PARAM_ALPHANUMEXT);
         $now = time();
+        // A course-specific health record must reference an existing course the learner is enrolled in,
+        // otherwise it would attach to an invalid/ambiguous course context.
+        $recordcourseid = (int)self::value($data, 'courseid', 0);
+        if ($recordcourseid > 0 && !self::learner_enrolled_in_course($learnerid, $recordcourseid)) {
+            throw new \invalid_parameter_exception(
+                'A course-specific health record requires the learner to be enrolled in that course.'
+            );
+        }
         $record = (object)[
             'childid' => $learnerid,
-            'courseid' => (int)self::value($data, 'courseid', 0),
+            'courseid' => $recordcourseid,
             'healthtype' => clean_param((string)self::value($data, 'healthtype', 'care_note'), PARAM_ALPHANUMEXT),
             'title' => clean_param((string)self::value($data, 'title', self::value($data, 'healthtitle', '')), PARAM_TEXT),
             'summary' => clean_param((string)self::value($data, 'summary', self::value($data, 'healthsummary', '')), PARAM_TEXT),

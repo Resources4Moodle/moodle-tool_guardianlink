@@ -43,6 +43,10 @@ $isadult = relationship_service::can_access_child((int)$USER->id, $childid, $cou
 if (!$isteacher && !$isadult) {
     throw new moodle_exception('accessdenied', 'tool_guardianlink');
 }
+// Reject stale/guessed childid+courseid pairings: the learner must be enrolled in this course.
+if (!relationship_service::learner_enrolled_in_course($childid, $courseid)) {
+    throw new moodle_exception('notenrolled', 'tool_guardianlink');
+}
 
 $PAGE->set_context($context);
 $PAGE->set_url(new moodle_url('/admin/tool/guardianlink/teachers.php', ['childid' => $childid, 'courseid' => $courseid]));
