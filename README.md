@@ -10,7 +10,7 @@ integration. It targets **Moodle 5.2 and later only**.
 
 ## Status
 
-**Release candidate — `1.0.0-rc1` (`MATURITY_RC`).** The feature set is complete and covered
+**Release candidate — `1.0.0-rc3` (`MATURITY_RC`).** The feature set is complete and covered
 by automated PHPUnit tests, and it installs and runs on Moodle 5.2. It is **not yet certified
 stable**: a formal security review, accessibility review, and data-protection (DPIA) sign-off
 are still required before you rely on it in production with real children's data. Treat this
@@ -160,14 +160,11 @@ match an existing course are **skipped**, not created.
 
 ## Documentation
 
-- `docs/product-requirements.md`
 - `docs/roles-and-relationship-model.md`
 - `docs/admin-rationalisation.md`
 - `docs/health-and-care-records.md`
 - `docs/erp-api.md`
-- `docs/phase-completion-matrix.md`
 - `docs/data-protection-impact-assessment-template.md`
-- `docs/test-plan.md`
 
 ## License
 
